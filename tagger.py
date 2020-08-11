@@ -1,20 +1,52 @@
-from torch.nn import LSTM, Linear, Module, Embedding
+from torch.nn import LSTM, Linear, Module, Embedding, Dropout, Sequential, ReLU
 from torch import cat, zeros, ones
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence
+from collections import namedtuple
 
 class tagger(Module):
-    def __init__(self, dims, pretrained_word_embedding, pos_embedding=10, lstm_layers=1, dropout=0, hidden_size=100):
+    class Hyperparameters(namedtuple("Hyperparameters", "pos lstm_layers lstm_size mlp_layers mlp_size dropout")):
+        defaults = (10, 1, 100, 1, 100, 0.1)
+        types = (int, int, int, int, int, float)
+
+        @classmethod
+        def default(cls):
+            return cls(*cls.defaults)
+
+        @classmethod
+        def from_dict(cls, dic):
+            values = (val_type(dic[key]) if key in dic else default \
+                for (default, val_type, key) in zip(cls.defaults, cls.types, cls._fields))
+            return cls(*values)
+
+    def __init__(self, dims, pretrained_word_embedding, param=None): #pos_embedding=10, lstm_layers=1, mlp_layers=1, dropout=0, lstm_size=100, mlp_size=100):
         super(tagger, self).__init__()
+        if param is None:
+            param = self.Hyperparameters.default()
         poss, preterms, supertags = dims
         word_embedding_dim = pretrained_word_embedding.shape[1]
+
         # add padding entry to word embedding at index 0
         padding_entry = zeros((1, pretrained_word_embedding.shape[1]))
         pretrained_word_embedding = cat((padding_entry, pretrained_word_embedding))
         self.words = Embedding.from_pretrained(pretrained_word_embedding, padding_idx=0)
-        self.pos = Embedding(poss+1, pos_embedding, padding_idx=0)
-        self.bilstm = LSTM(input_size=word_embedding_dim+pos_embedding, hidden_size=hidden_size, bidirectional=True, num_layers=lstm_layers, dropout=dropout)
-        self.ff_st = Linear(in_features=2*hidden_size, out_features=supertags)
-        self.ff_pt = Linear(in_features=2*hidden_size, out_features=preterms)
+        self.pos = Embedding(poss+1, param.pos, padding_idx=0)
+
+        self.bilstm = LSTM(input_size=word_embedding_dim+param.pos, hidden_size=param.lstm_size, \
+            bidirectional=True, num_layers=param.lstm_layers, dropout=param.dropout if param.lstm_layers > 1 else 0)
+        
+        next_size = 2*param.lstm_size
+        ffs = []
+        for _ in range(param.mlp_layers-1):
+            ffs.append(Dropout(p=param.dropout))
+            ffs.append(Linear(in_features=next_size, out_features=param.mlp_size))
+            ffs.append(ReLU())
+            next_size = param.mlp_size
+
+        ffs.append(Dropout(p=param.dropout))
+        ffs.append(Linear(in_features=next_size, out_features=preterms+supertags))
+        self.ffs = Sequential(*ffs)
+        self.preterminals = preterms
+        self.supertags = supertags
 
     def get_mask(self, lens):
         m = tuple(ones((seqlen,), dtype=bool) for seqlen in lens)
@@ -31,16 +63,15 @@ class tagger(Module):
         x = pack_padded_sequence(x, lens, enforce_sorted=False)
         x, _ = self.bilstm(x)
         x, lens = pad_packed_sequence(x)
-        st_scores = self.ff_st(x)
-        pt_scores = self.ff_pt(x)
-        return (pt_scores, st_scores)
+        x = self.ffs(x)
+        return x.split((self.preterminals, self.supertags), dim=2)
 
     @classmethod
     def n_best_tags(cls, y, n):
         from numpy import argpartition
         pt_scores, st_scores = y
-        pts = pt_scores.argmax(dim=1)
-        sts = argpartition(-st_scores, n, axis=1)[:,0:n]
+        pts = pt_scores.argmax(dim=2)
+        sts = argpartition(-st_scores, n, axis=2)[:,:,0:n]
         return (pts, sts)
 
     @classmethod
@@ -54,7 +85,7 @@ class tagger(Module):
         return gold_position
 
 def test_dims():
-    from torch import rand, randint
+    from torch import rand, randint, no_grad
     from torch.nn import Flatten
 
     words = 8
@@ -77,15 +108,16 @@ def test_dims():
             pos[oob, batch] = -1
 
     (pt, st) = t((words, pos, lens))
+    mask = t.get_mask(lens)
     assert st.shape == (max_seq_size, batch_size, supertags) and pt.shape == (max_seq_size, batch_size, preterms)
-    iron = Flatten(0, 1)
-    assert iron(st).shape == (max_seq_size * batch_size, supertags) and iron(pt).shape == (max_seq_size * batch_size, preterms)
+    assert st[mask].shape == (lens.sum(), supertags) and pt[mask].shape == (lens.sum(), preterms)
 
-    gold_tags = randint(supertags, (max_seq_size, batch_size))
-    gold_tags[words == -1] = -1
-    assert tagger.index_in_sorted(st, gold_tags).shape == (max_seq_size, batch_size)
-    (best_pt, n_best_st) = tagger.n_best_tags((pt, st), 3)
-    assert best_pt.shape == (max_seq_size, batch_size) and n_best_st.shape == (max_seq_size, batch_size, 3)
+    with no_grad():
+        gold_tags = randint(supertags, (max_seq_size, batch_size))
+        gold_tags[words == -1] = -1
+        assert tagger.index_in_sorted(st, gold_tags).shape == (max_seq_size, batch_size)
+        (best_pt, n_best_st) = tagger.n_best_tags((pt, st), 3)
+        assert best_pt.shape == (max_seq_size, batch_size) and n_best_st.shape == (max_seq_size, batch_size, 3)
 
 def test_index_in_sorted():
     from torch import rand, randint

@@ -4,3 +4,4 @@ __pycache__
 !example.conf
 data
 runs
+model.pt

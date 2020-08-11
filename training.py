@@ -1,7 +1,7 @@
 from discodop.lexcorpus import SupertagCorpus
 from os.path import isfile
 from torch import cat, optim, save, load, no_grad, device, cuda, tensor
-from torch.nn import CrossEntropyLoss, Flatten, KLDivLoss, LogSoftmax
+from torch.nn import CrossEntropyLoss, KLDivLoss, LogSoftmax
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, Dataset, random_split
 
@@ -42,19 +42,15 @@ def load_data(config, tag_distance=1):
 def train_model(training_conf, data_conf=None, torch_device=device("cpu"), report_loss=print, report_histogram=None, start_state=None):
     (training, dev, _), embedding, dims, tags = load_data(data_conf, float(training_conf["tag_distance"]))
     training_tags, _ = tags
-    pos_dim, layers, hidden_size, epochs = \
-        (int(training_conf[k]) for k in ("pos_dim", "lstm_layers", "hidden_size", "epochs"))
-    lr, momentum, dropout, alpha = \
-        (float(training_conf[k]) for k in ("learning_rate", "momentum", "dropout", "loss_balance"))
+    epochs = int(training_conf["epochs"])
+    lr, momentum, alpha = \
+        (float(training_conf[k]) for k in ("lr", "momentum", "loss_balance"))
     save_epochs = int(training_conf["save_epochs"]) if "save_epochs" in training_conf else 0
 
     # setup Model
-    model = tagger(dims, embedding.vectors, \
-        pos_embedding=pos_dim, lstm_layers=layers, \
-        dropout=dropout, hidden_size=hidden_size)
+    model = tagger(dims, embedding.vectors, tagger.Hyperparameters.from_dict(training_conf))
     model.double()
     model.to(torch_device)
-    iron = Flatten(0, 1)
     ce_loss = CrossEntropyLoss(ignore_index=-1, reduction='mean')
     softmax = LogSoftmax(dim=1)
     kl_loss = KLDivLoss(reduction='batchmean')
