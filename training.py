@@ -1,29 +1,22 @@
 from discodop.lexcorpus import SupertagCorpus
-from sys import argv
 from os.path import isfile
-from configparser import ConfigParser
 from torch import cat, optim, save, load, no_grad, device, cuda, tensor
 from torch.nn import CrossEntropyLoss, Flatten, KLDivLoss, LogSoftmax
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, Dataset, random_split
 
 from tagger import tagger
-from dataset import SupertagDataset, Word2Vec
+from dataset import SupertagDataset, embedding_factory
 
 
 def load_data(config, tag_distance=1):
-    if not "base" in config["Data"]:
-        corpus_filename = argv[2]
-    else:
-        corpus_filename = config["Data"]["base"]
-
     # setup word embeddings
-    embedding = Word2Vec(corpus_filename+config["Data"]["embedding_suffix"])
+    embedding = embedding_factory(config["Data"]["word_embedding"])
 
     # setup corpus
-    corpus = SupertagCorpus.read(open(corpus_filename, "rb"))
-    if isfile(corpus_filename + ".mat"):
-        corpus.read_confusion_matrix(open(corpus_filename+".mat", "rb"))
+    corpus = SupertagCorpus.read(open(config["Data"]["corpus"], "rb"))
+    if isfile(config["Data"]["corpus"] + ".mat"):
+        corpus.read_confusion_matrix(open(config["Data"]["corpus"]+".mat", "rb"))
     data = SupertagDataset(corpus, embedding.token_to_index, tag_distance=tag_distance)
     dims = data.dims
 
@@ -37,19 +30,18 @@ def load_data(config, tag_distance=1):
     dev_tags = set(st.item() for _, _, _, sts in dev for st in sts)
 
     # setup data loaders
-    shuffle = config["Training"].getboolean("shuffle")
-    training_batch_size = int(config["Training"]["batch_size"])
-    train_loader = DataLoader(train, batch_size=training_batch_size, shuffle=shuffle, collate_fn=data.collate_training)
-    dev_batch_size = int(config["Dev"]["batch_size"])
-    dev_loader = DataLoader(dev, batch_size=dev_batch_size, collate_fn=data.collate_test)
-    test_loader = DataLoader(test, batch_size=dev_batch_size, collate_fn=data.collate_test)
+    shuffle = config["Data"].getboolean("shuffle")
+    batch_size = int(config["Data"]["batch_size"])
+    train_loader = DataLoader(train, batch_size=batch_size, shuffle=shuffle, collate_fn=data.collate_training)
+    dev_loader = DataLoader(dev, batch_size=batch_size, collate_fn=data.collate_test)
+    test_loader = DataLoader(test, batch_size=batch_size, collate_fn=data.collate_test)
     
     return (train_loader, dev_loader, test_loader), embedding, dims, (training_tags, dev_tags-training_tags)
 
 
 def train_model(training_conf, data_conf=None, torch_device=device("cpu"), report_loss=print, report_histogram=None, start_state=None):
     (training, dev, _), embedding, dims, tags = load_data(data_conf, float(training_conf["tag_distance"]))
-    training_tags, dev_tags = tags
+    training_tags, _ = tags
     pos_dim, layers, hidden_size, epochs = \
         (int(training_conf[k]) for k in ("pos_dim", "lstm_layers", "hidden_size", "epochs"))
     lr, momentum, dropout, alpha = \
@@ -150,17 +142,26 @@ def report_tensorboard_histogram(values, iteration_or_epoch):
     for (key, vals) in values.items():
         writer.add_histogram(key, vals, iteration_or_epoch)
 
-if __name__ == "__main__":
+
+def read_config():
+    from sys import argv
+    from configparser import ConfigParser
+
     if len(argv) < 2:
-        msg = f"""use {argv[0]} <config> [corpus]
-                or {argv[0]} default corpus"""
-        print(msg)
+        print(f"use {argv[0]} <config> [<corpus>]")
         exit(1)
 
     config = ConfigParser()
-    config.read("training.conf" if argv[1] == "default" else argv[1])
-    training_conf = config["Training"]
+    config.read(argv[1])
+    if len(argv) > 2:
+        config["Data"]["corpus"] = argv[2]
 
+    return config
+
+
+if __name__ == "__main__":
+    config = read_config()
+    training_conf = config["Training"]
     torch_device = device("cuda" if cuda.is_available() else "cpu")
     print(f"running on device {torch_device}")
     try:

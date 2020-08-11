@@ -2,8 +2,19 @@
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
 from torch import tensor, zeros
-from torchtext.vocab import Vectors
+from torchtext.vocab import Vectors, FastText
 from torch.nn.functional import softmax
+
+def embedding_factory(def_str):
+    def_strs = def_str.split()
+    embedding_type, params = def_strs[0], def_strs[1:]
+    if embedding_type == "word2vec":
+        (filename,) = params
+        return Word2Vec(filename)
+    if embedding_type == "fasttext":
+        (language,) = params
+        return FastText(language)
+    raise NotImplementedError()
 
 class Word2Vec(Vectors):
     def __init__(self, filename):
