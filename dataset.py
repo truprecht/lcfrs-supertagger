@@ -10,24 +10,11 @@ def embedding_factory(def_str):
     embedding_type, params = def_strs[0], def_strs[1:]
     if embedding_type == "word2vec":
         (filename,) = params
-        return Word2Vec(filename)
+        return Vectors(filename)
     if embedding_type == "fasttext":
         (language,) = params
         return FastText(language)
     raise NotImplementedError()
-
-class Word2Vec(Vectors):
-    def __init__(self, filename):
-        super().__init__(filename)
-
-    def token_to_index(self, token):
-        return self.stoi["</s>"] if not token in self.stoi else self.stoi[token]
-
-    def __getitem__(self, token):
-        if not token in self.stoi:
-            return self.vectors[self.stoi["</s>"]]
-        else:
-            return self.vectors[self.stoi[token]]
 
 class SupertagDataset(Dataset):
     def __init__(self, c, stoi, tag_distance=1):

@@ -17,7 +17,7 @@ def load_data(config, tag_distance=1):
     corpus = SupertagCorpus.read(open(config["Data"]["corpus"], "rb"))
     if isfile(config["Data"]["corpus"] + ".mat"):
         corpus.read_confusion_matrix(open(config["Data"]["corpus"]+".mat", "rb"))
-    data = SupertagDataset(corpus, embedding.token_to_index, tag_distance=tag_distance)
+    data = SupertagDataset(corpus, lambda w: embedding.stoi.get(w, -1), tag_distance=tag_distance)
     dims = data.dims
 
     # setup corpus split
