@@ -26,21 +26,21 @@ def load_data(config, tag_distance=1):
     train, dev = int(len(data)*train), int(len(data)*dev)
     test = len(data)-train-dev
     (train, dev, test) = random_split(data, (train, dev, test))
-    training_tags = set(st.item() for _, _, _, sts in train for st in sts)
-    dev_tags = set(st.item() for _, _, _, sts in dev for st in sts)
+    training_tags = set(st.item() for _, _, _, _, _, sts in train for st in sts)
+    dev_tags = set(st.item() for _, _, _, _, _, sts in dev for st in sts)
 
     # setup data loaders
     shuffle = config["Data"].getboolean("shuffle")
     batch_size = int(config["Data"]["batch_size"])
     train_loader = DataLoader(train, batch_size=batch_size, shuffle=shuffle, collate_fn=data.collate_training)
-    dev_loader = DataLoader(dev, batch_size=batch_size, collate_fn=data.collate_test)
-    test_loader = DataLoader(test, batch_size=batch_size, collate_fn=data.collate_test)
+    test_loader = DataLoader(dev, batch_size=batch_size, collate_fn=data.collate_test)
+    val_loader = DataLoader(test, batch_size=batch_size, collate_fn=data.collate_val)
     
-    return (train_loader, dev_loader, test_loader), embedding, dims, (training_tags, dev_tags-training_tags)
+    return (train_loader, test_loader, val_loader), embedding, dims, (training_tags, dev_tags-training_tags)
 
 
 def train_model(training_conf, data_conf=None, torch_device=device("cpu"), report_loss=print, report_histogram=None, start_state=None):
-    (training, dev, _), embedding, dims, tags = load_data(data_conf, float(training_conf["tag_distance"]))
+    (training, test, _), embedding, dims, tags = load_data(data_conf, float(training_conf["tag_distance"]))
     training_tags, _ = tags
     epochs = int(training_conf["epochs"])
     lr, momentum, alpha = \
@@ -89,7 +89,7 @@ def train_model(training_conf, data_conf=None, torch_device=device("cpu"), repor
                 "score/test/supertags": [],
                 "score/test/supertags/trained": [],
                 "score/test/supertags/untrained": [] }
-            for sample in dev:
+            for sample in test:
                 words, pos, prets, stags, lens = sample
                 words, pos, prets, stags, lens = (t.to(torch_device) for t in sample)
                 (pr_prets, pr_stags) = model.forward((words, pos, lens))
@@ -110,8 +110,8 @@ def train_model(training_conf, data_conf=None, torch_device=device("cpu"), repor
                     histograms["score/test/supertags"].append(gold_scores)
                     histograms["score/test/supertags/trained"].append(gold_scores[gold_in_training])
                     histograms["score/test/supertags/untrained"].append(gold_scores[~gold_in_training])
-            dl1 /= len(dev)
-            dl2 /= len(dev)
+            dl1 /= len(test)
+            dl2 /= len(test)
 
             report_loss({ "loss/test/preterminals": dl1,
                      "loss/test/supertags": dl2,

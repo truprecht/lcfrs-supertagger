@@ -68,11 +68,16 @@ class tagger(Module):
 
     @classmethod
     def n_best_tags(cls, y, n):
-        from numpy import argpartition
+        import numpy as np
         pt_scores, st_scores = y
         pts = pt_scores.argmax(dim=2)
-        sts = argpartition(-st_scores, n, axis=2)[:,:,0:n]
-        return (pts, sts)
+        sts = np.argpartition(-st_scores.numpy(), n-1, axis=2)[:,:,0:n]
+        weights = np.take_along_axis(st_scores.numpy(), sts, 2)
+        # softmax for weights
+        # TODO move this to model layer
+        weights = np.exp(weights)
+        weights = weights / weights.sum(axis=2)[:,:,np.newaxis]
+        return (pts, sts, weights)
 
     @classmethod
     def index_in_sorted(cls, y, gold_indices):
@@ -116,8 +121,10 @@ def test_dims():
         gold_tags = randint(supertags, (max_seq_size, batch_size))
         gold_tags[words == -1] = -1
         assert tagger.index_in_sorted(st, gold_tags).shape == (max_seq_size, batch_size)
-        (best_pt, n_best_st) = tagger.n_best_tags((pt, st), 3)
-        assert best_pt.shape == (max_seq_size, batch_size) and n_best_st.shape == (max_seq_size, batch_size, 3)
+        (best_pt, n_best_st, n_best_weights) = tagger.n_best_tags((pt, st), 3)
+        assert best_pt.shape == (max_seq_size, batch_size) \
+            and n_best_st.shape == (max_seq_size, batch_size, 3) \
+            and n_best_weights.shape == (max_seq_size, batch_size, 3)
 
 def test_index_in_sorted():
     from torch import rand, randint
