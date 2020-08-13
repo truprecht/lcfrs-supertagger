@@ -161,7 +161,7 @@ def validate(model, val_data, grammar):
                 sequence_supertags = supertags[0:sequence_len, batch_idx]
                 sequence_weights = weights[0:sequence_len, batch_idx]
                 sequence_pos = pos[0:sequence_len, batch_idx].numpy()
-                derivs = grammar.parse(words[batch_idx], sequence_pos, sequence_preterminals, sequence_supertags, sequence_weights, 1)
+                derivs = grammar.deintegerize_and_parse(words[batch_idx], sequence_pos, sequence_preterminals, sequence_supertags, sequence_weights, 1)
                 deriv = first_or_noparse(derivs, words[batch_idx], [grammar.pos[n] for n in sequence_pos])
                 evaluator.add(i, trees[batch_idx], list(words[batch_idx]), deriv, list(words[batch_idx]))
                 i += 1
