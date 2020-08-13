@@ -4,6 +4,23 @@ from torch.nn.utils.rnn import pad_sequence
 from torch import tensor, zeros
 from torchtext.vocab import Vectors, FastText
 from torch.nn.functional import softmax
+from torch.utils.data import random_split, Subset
+
+def split_data(split_config, dataset):
+    (random_or_serial, absolute_or_ratio, train, test, val) = split_config.split()
+    if absolute_or_ratio == "ratio":
+        train, test, val = float(train), float(test), float(val)
+        assert train + test + val <= 1
+        train, test, val = round(train * len(dataset)), round(test * len(dataset)), round(val * len(dataset))
+    elif absolute_or_ratio == "absolute":
+        train, test, val = int(train), int(test), int(val)
+        assert train + test + val <= len(dataset)
+    if random_or_serial == "random":
+        return random_split(dataset, (train, test, val))
+    elif random_or_serial == "serial":
+        starts = (0, train, train+test)
+        ends = (train, train+test, train+test+val)
+        return (Subset(dataset, range(start, end)) for start, end in zip(starts, ends))
 
 def embedding_factory(def_str):
     def_strs = def_str.split()

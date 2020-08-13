@@ -1,12 +1,16 @@
 from discodop.lexcorpus import SupertagCorpus
-from os.path import isfile
+from discodop.lexgrammar import SupertagGrammar
+from discodop.tree import ParentedTree
+
 from torch import cat, optim, save, load, no_grad, device, cuda, tensor
 from torch.nn import CrossEntropyLoss, KLDivLoss, LogSoftmax
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, Dataset, random_split
 
+from os.path import isfile
+
 from tagger import tagger
-from dataset import SupertagDataset, embedding_factory
+from dataset import SupertagDataset, embedding_factory, split_data
 
 
 def load_data(config, tag_distance=1):
@@ -17,17 +21,13 @@ def load_data(config, tag_distance=1):
     corpus = SupertagCorpus.read(open(config["Data"]["corpus"], "rb"))
     if isfile(config["Data"]["corpus"] + ".mat"):
         corpus.read_confusion_matrix(open(config["Data"]["corpus"]+".mat", "rb"))
+    grammar = SupertagGrammar(corpus)
     data = SupertagDataset(corpus, lambda w: embedding.stoi.get(w, -1), tag_distance=tag_distance)
     dims = data.dims
 
     # setup corpus split
-    train, dev, test = (float(q) for q in config["Data"]["split"].split())
-    assert train + dev + test == 1
-    train, dev = int(len(data)*train), int(len(data)*dev)
-    test = len(data)-train-dev
-    (train, dev, test) = random_split(data, (train, dev, test))
+    train, dev, test = split_data(config["Data"]["split"], data)
     training_tags = set(st.item() for _, _, _, _, _, sts in train for st in sts)
-    dev_tags = set(st.item() for _, _, _, _, _, sts in dev for st in sts)
 
     # setup data loaders
     shuffle = config["Data"].getboolean("shuffle")
@@ -36,12 +36,11 @@ def load_data(config, tag_distance=1):
     test_loader = DataLoader(dev, batch_size=batch_size, collate_fn=data.collate_test)
     val_loader = DataLoader(test, batch_size=batch_size, collate_fn=data.collate_val)
     
-    return (train_loader, test_loader, val_loader), embedding, dims, (training_tags, dev_tags-training_tags)
+    return (train_loader, test_loader, val_loader), embedding, dims, training_tags, grammar
 
 
 def train_model(training_conf, data_conf=None, torch_device=device("cpu"), report_loss=print, report_histogram=None, start_state=None):
-    (training, test, _), embedding, dims, tags = load_data(data_conf, float(training_conf["tag_distance"]))
-    training_tags, _ = tags
+    (training, test, val), embedding, dims, training_tags, grammar = load_data(data_conf, float(training_conf["tag_distance"]))
     epochs = int(training_conf["epochs"])
     lr, momentum, alpha = \
         (float(training_conf[k]) for k in ("lr", "momentum", "loss_balance"))
@@ -127,6 +126,46 @@ def train_model(training_conf, data_conf=None, torch_device=device("cpu"), repor
                 "optimizer": opt.state_dict(),
                 "iteration": iteration
             }, training_conf["save_file"])
+
+    validate(model, val, grammar)
+
+
+def first_or_noparse(derivations, sentence, pos):
+    from discodop.treebanktransforms import removefanoutmarkers
+    from discodop.lexcorpus import to_parse_tree
+    try:
+        deriv = next(derivations)
+        deriv = to_parse_tree(deriv)
+        return removefanoutmarkers(deriv)
+    except StopIteration:
+        leaves = (f"({p} {i})" for p, i in zip(pos, range(len(sentence))))
+        return ParentedTree(f"(NOPARSE {' '.join(leaves)})")
+    except Exception as e:
+        print(e)
+
+
+def validate(model, val_data, grammar):
+    from discodop.eval import Evaluator, readparam
+    evaluator = Evaluator(readparam(config["Val"]["eval_param"]))
+    model.eval()
+    k = int(config["Val"]["top_tags"])
+    with no_grad():
+        i = 0
+        for sample in val_data:
+            words, trees, wordembeddings, pos, prets, stags, lens = sample
+            (wordembeddings, pos, prets, stags, lens) = (t.to(torch_device) for t in (wordembeddings, pos, prets, stags, lens))
+            (pret_scores, stag_scores) = model((wordembeddings, pos, lens))
+            preterminals, supertags, weights = tagger.n_best_tags((pret_scores, stag_scores), k)
+            for batch_idx, sequence_len in enumerate(lens):
+                sequence_preterminals = preterminals[0:sequence_len, batch_idx].numpy()
+                sequence_supertags = supertags[0:sequence_len, batch_idx]
+                sequence_weights = weights[0:sequence_len, batch_idx]
+                sequence_pos = pos[0:sequence_len, batch_idx].numpy()
+                derivs = grammar.parse(words[batch_idx], sequence_pos, sequence_preterminals, sequence_supertags, sequence_weights, 1)
+                deriv = first_or_noparse(derivs, words[batch_idx], [grammar.pos[n] for n in sequence_pos])
+                evaluator.add(i, trees[batch_idx], list(words[batch_idx]), deriv, list(words[batch_idx]))
+                i += 1
+        print(evaluator.summary())
 
 
 writer = SummaryWriter()
