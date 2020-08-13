@@ -1,7 +1,7 @@
 # pylint: disable=not-callable
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
-from torch import tensor, zeros
+from torch import tensor, zeros, cat, unsqueeze
 from torchtext.vocab import Vectors, FastText
 from torch.nn.functional import softmax
 from torch.utils.data import random_split, Subset
@@ -21,6 +21,20 @@ def split_data(split_config, dataset):
         starts = (0, train, train+test)
         ends = (train, train+test, train+test+val)
         return (Subset(dataset, range(start, end)) for start, end in zip(starts, ends))
+
+class TruncatedEmbedding(Vectors):
+    def __init__(self, embedding, vocab):
+        self.itos = ()
+        self.stoi = {}
+        self.dim = embedding.dim
+        self.unk_init = embedding.unk_init
+        vectors = []
+        for word in vocab:
+            if word in embedding.stoi:
+                self.stoi[word] = len(self.stoi)
+                self.itos += (word,)
+                vectors.append(embedding[word].unsqueeze(0))
+        self.vectors = cat(vectors)
 
 def embedding_factory(def_str):
     def_strs = def_str.split()

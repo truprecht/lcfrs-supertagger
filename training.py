@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Dataset, random_split
 from os.path import isfile
 
 from tagger import tagger
-from dataset import SupertagDataset, embedding_factory, split_data
+from dataset import SupertagDataset, embedding_factory, TruncatedEmbedding, split_data
 
 
 def load_data(config, tag_distance=1):
@@ -21,6 +21,9 @@ def load_data(config, tag_distance=1):
     corpus = SupertagCorpus.read(open(config["Data"]["corpus"], "rb"))
     if isfile(config["Data"]["corpus"] + ".mat"):
         corpus.read_confusion_matrix(open(config["Data"]["corpus"]+".mat", "rb"))
+    vocabulary = set(word for sentence in corpus.sent_corpus for word in sentence)
+    embedding = TruncatedEmbedding(embedding, vocabulary)
+
     grammar = SupertagGrammar(corpus)
     data = SupertagDataset(corpus, lambda w: embedding.stoi.get(w, -1), tag_distance=tag_distance)
     dims = data.dims
