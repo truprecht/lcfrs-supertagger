@@ -14,18 +14,18 @@ from dataset import SupertagDataset, embedding_factory, TruncatedEmbedding, spli
 
 
 def load_data(config, tag_distance=1):
-    # setup word embeddings
-    embedding = embedding_factory(config["Data"]["word_embedding"])
-
     # setup corpus
     corpus = SupertagCorpus.read(open(config["Data"]["corpus"], "rb"))
     if isfile(config["Data"]["corpus"] + ".mat"):
         corpus.read_confusion_matrix(open(config["Data"]["corpus"]+".mat", "rb"))
     vocabulary = set(word for sentence in corpus.sent_corpus for word in sentence)
+
+    # setup word embeddings
+    embedding = embedding_factory(config["Data"]["word_embedding"])
     embedding = TruncatedEmbedding(embedding, vocabulary)
 
     grammar = SupertagGrammar(corpus)
-    data = SupertagDataset(corpus, lambda w: embedding.stoi.get(w, -1), tag_distance=tag_distance)
+    data = SupertagDataset(corpus, embedding, tag_distance=tag_distance)
     dims = data.dims
 
     # setup corpus split
@@ -39,18 +39,18 @@ def load_data(config, tag_distance=1):
     test_loader = DataLoader(dev, batch_size=batch_size, collate_fn=data.collate_test)
     val_loader = DataLoader(test, batch_size=batch_size, collate_fn=data.collate_val)
     
-    return (train_loader, test_loader, val_loader), embedding, dims, training_tags, grammar
+    return (train_loader, test_loader, val_loader), dims, training_tags, grammar
 
 
 def train_model(training_conf, data_conf=None, torch_device=device("cpu"), report_loss=print, report_histogram=None, start_state=None):
-    (training, test, val), embedding, dims, training_tags, grammar = load_data(data_conf, float(training_conf["tag_distance"]))
+    (training, test, val), dims, training_tags, grammar = load_data(data_conf, float(training_conf["tag_distance"]))
     epochs = int(training_conf["epochs"])
     lr, momentum, alpha = \
         (float(training_conf[k]) for k in ("lr", "momentum", "loss_balance"))
     save_epochs = int(training_conf["save_epochs"]) if "save_epochs" in training_conf else 0
 
     # setup Model
-    model = tagger(dims, embedding.vectors, tagger.Hyperparameters.from_dict(training_conf))
+    model = tagger(dims, tagger.Hyperparameters.from_dict(training_conf))
     model.double()
     model.to(torch_device)
     ce_loss = CrossEntropyLoss(ignore_index=-1, reduction='mean')

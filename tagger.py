@@ -18,18 +18,13 @@ class tagger(Module):
                 for (default, val_type, key) in zip(cls.defaults, cls.types, cls._fields))
             return cls(*values)
 
-    def __init__(self, dims, pretrained_word_embedding, param=None): #pos_embedding=10, lstm_layers=1, mlp_layers=1, dropout=0, lstm_size=100, mlp_size=100):
+    def __init__(self, dims, param=None):
         super(tagger, self).__init__()
         if param is None:
             param = self.Hyperparameters.default()
-        poss, preterms, supertags = dims
-        word_embedding_dim = pretrained_word_embedding.shape[1]
+        word_embedding_dim, postags, preterms, supertags = dims
 
-        # add padding entry to word embedding at index 0
-        padding_entry = zeros((1, pretrained_word_embedding.shape[1]))
-        pretrained_word_embedding = cat((padding_entry, pretrained_word_embedding))
-        self.words = Embedding.from_pretrained(pretrained_word_embedding, padding_idx=0)
-        self.pos = Embedding(poss+1, param.pos, padding_idx=0)
+        self.pos = Embedding(postags+1, param.pos, padding_idx=0)
 
         self.bilstm = LSTM(input_size=word_embedding_dim+param.pos, hidden_size=param.lstm_size, \
             bidirectional=True, num_layers=param.lstm_layers, dropout=param.dropout if param.lstm_layers > 1 else 0)
@@ -58,7 +53,6 @@ class tagger(Module):
         """
         (words, pos_tags, lens) = x
         pos_tags = self.pos(pos_tags+1)
-        words = self.words(words+1)
         x = cat((words, pos_tags), 2)
         x = pack_padded_sequence(x, lens, enforce_sorted=False)
         x, _ = self.bilstm(x)

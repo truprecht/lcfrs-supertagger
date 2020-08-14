@@ -48,19 +48,22 @@ def embedding_factory(def_str):
     raise NotImplementedError()
 
 class SupertagDataset(Dataset):
-    def __init__(self, c, stoi, tag_distance=1):
+    def __init__(self, c, word_embeddings, tag_distance=1):
         # TODO: sort by length
-        self.dims = len(c.pos), len(c.preterms), len(c.supertags)
-        self.sentence_embeddings = tuple( tensor([stoi(w) for w in sentence]) for sentence in c.sent_corpus )
+        self.dims = word_embeddings.dim, len(c.pos), len(c.preterms), len(c.supertags)
+
+        self.trees = c.tree_corpus
         self.sentences = c.sent_corpus
+        self.word_embeddings = word_embeddings
+
         self.pos_tags = tuple( tensor(pos) for pos in c.pos_corpus )
         self.preterminals = tuple( tensor(prets) for prets in c.preterm_corpus )
         self.supertags = tuple( tensor(st) for st in c.supertag_corpus )
         self.supertag_distances = tensor(-tag_distance * c.confusion_matrix).softmax(dim=1).double()
-        self.trees = c.tree_corpus
 
     def __getitem__(self, key):
-        return self.sentences[key], self.sentence_embeddings[key], self.trees[key], \
+        words = self.sentences[key]
+        return words, self.word_embeddings.get_vecs_by_tokens(words), self.trees[key], \
             self.pos_tags[key], self.preterminals[key], self.supertags[key]
 
     def __len__(self):
