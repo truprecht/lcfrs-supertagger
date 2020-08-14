@@ -134,18 +134,19 @@ def train_model(training_conf, data_conf=None, torch_device=device("cpu"), repor
 
 
 def first_or_noparse(derivations, sentence, pos):
-    from discodop.treebanktransforms import removefanoutmarkers
     from discodop.lexcorpus import to_parse_tree
     try:
         deriv = next(derivations)
         deriv = to_parse_tree(deriv)
-        return removefanoutmarkers(deriv)
+        return deriv
     except StopIteration:
         leaves = (f"({p} {i})" for p, i in zip(pos, range(len(sentence))))
         return ParentedTree(f"(NOPARSE {' '.join(leaves)})")
-    except Exception as e:
-        print(e)
 
+def unbin(parse):
+    from discodop.treebanktransforms import removefanoutmarkers
+    from discodop.treetransforms import unbinarize
+    return unbinarize(removefanoutmarkers(parse))
 
 def validate(model, val_data, grammar):
     from discodop.eval import Evaluator, readparam
@@ -166,7 +167,7 @@ def validate(model, val_data, grammar):
                 sequence_pos = pos[0:sequence_len, batch_idx].numpy()
                 derivs = grammar.deintegerize_and_parse(words[batch_idx], sequence_pos, sequence_preterminals, sequence_supertags, sequence_weights, 1)
                 deriv = first_or_noparse(derivs, words[batch_idx], [grammar.pos[n] for n in sequence_pos])
-                evaluator.add(i, trees[batch_idx], list(words[batch_idx]), deriv, list(words[batch_idx]))
+                evaluator.add(i, unbin(trees[batch_idx]), list(words[batch_idx]), unbin(deriv), list(words[batch_idx]))
                 i += 1
         print(evaluator.summary())
 
