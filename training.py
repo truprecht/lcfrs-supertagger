@@ -161,10 +161,10 @@ def validate(model, val_data, grammar):
             (pret_scores, stag_scores) = model((wordembeddings, pos, lens))
             preterminals, supertags, weights = tagger.n_best_tags((pret_scores, stag_scores), k)
             for batch_idx, sequence_len in enumerate(lens):
-                sequence_preterminals = preterminals[0:sequence_len, batch_idx].numpy()
+                sequence_preterminals = preterminals[0:sequence_len, batch_idx].cpu().numpy()
                 sequence_supertags = supertags[0:sequence_len, batch_idx]
                 sequence_weights = weights[0:sequence_len, batch_idx]
-                sequence_pos = pos[0:sequence_len, batch_idx].numpy()
+                sequence_pos = pos[0:sequence_len, batch_idx].cpu().numpy()
                 derivs = grammar.deintegerize_and_parse(words[batch_idx], sequence_pos, sequence_preterminals, sequence_supertags, sequence_weights, 1)
                 deriv = first_or_noparse(derivs, words[batch_idx], [grammar.pos[n] for n in sequence_pos])
                 evaluator.add(i, unbin(trees[batch_idx]), list(words[batch_idx]), unbin(deriv), list(words[batch_idx]))

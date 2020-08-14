@@ -65,8 +65,8 @@ class tagger(Module):
         import numpy as np
         pt_scores, st_scores = y
         pts = pt_scores.argmax(dim=2)
-        sts = np.argpartition(-st_scores.numpy(), n-1, axis=2)[:,:,0:n]
-        weights = np.take_along_axis(st_scores.numpy(), sts, 2)
+        sts = np.argpartition(-st_scores.cpu().numpy(), n-1, axis=2)[:,:,0:n]
+        weights = np.take_along_axis(st_scores.cpu().numpy(), sts, 2)
         # softmax for weights
         # TODO move this to model layer
         weights = np.exp(weights)
