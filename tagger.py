@@ -77,6 +77,7 @@ class tagger(Module):
         # TODO move this to model layer
         weights = np.exp(weights)
         weights = weights / weights.sum(axis=2)[:,:,np.newaxis]
+        weights = -np.log(weights)
         return (pts, sts, weights)
 
     @classmethod
