@@ -1,10 +1,12 @@
 # pylint: disable=not-callable
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
-from torch import tensor, zeros, cat, unsqueeze
+from torch import tensor, zeros, cat, unsqueeze, from_numpy
 from torchtext.vocab import Vectors, FastText
 from torch.nn.functional import softmax
 from torch.utils.data import random_split, Subset
+
+import numpy as np
 
 def split_data(split_config, dataset):
     (random_or_serial, absolute_or_ratio, train, test, val) = split_config.split()
@@ -58,13 +60,36 @@ class SupertagDataset(Dataset):
 
         self.pos_tags = tuple( tensor(pos) for pos in c.pos_corpus )
         self.preterminals = tuple( tensor(prets) for prets in c.preterm_corpus )
-        self.supertags = tuple( tensor(st) for st in c.supertag_corpus )
+        self.supertags = tuple( np.array(st) for st in c.supertag_corpus )
         self.supertag_distances = tensor(-tag_distance * c.confusion_matrix).softmax(dim=1).double()
+
+        self.truncated_to_all = np.arange(len(self.supertags))
+        self.all_to_truncated = np.arange(len(self.supertags))
+        self.truncated_distances = self.supertag_distances
+
+    def truncate_supertags(self, indices):
+        """ Only consider those supertags occurring in sentences
+            at given indices in corpus.
+        """
+        tags_in_trunc = set(t for index in indices for t in self.supertags[index])
+        self.truncated_to_all = np.fromiter(iter(tags_in_trunc), dtype=int, count=len(tags_in_trunc))
+        self.all_to_truncated = np.full((self.dims[3],), len(self.truncated_to_all))
+        self.all_to_truncated[self.truncated_to_all] = np.arange(len(self.truncated_to_all))
+
+        # add one unk-supertag
+        n_supertags = len(self.truncated_to_all)+1
+        self.dims = (*self.dims[0:3], n_supertags)
+
+        self.truncated_distances = zeros((n_supertags, n_supertags)).double()
+        self.truncated_distances[0:n_supertags-1, 0:n_supertags-1] \
+            = self.supertag_distances[self.truncated_to_all][:, self.truncated_to_all]
+        self.truncated_distances /= self.truncated_distances.sum(dim=1).unsqueeze(1)
 
     def __getitem__(self, key):
         words = self.sentences[key]
+        truncated_tags = from_numpy(self.all_to_truncated[self.supertags[key]])
         return words, self.word_embeddings.get_vecs_by_tokens(words), self.trees[key], \
-            self.pos_tags[key], self.preterminals[key], self.supertags[key]
+            self.pos_tags[key], self.preterminals[key], truncated_tags
 
     def __len__(self):
         return len(self.sentences)
@@ -72,8 +97,8 @@ class SupertagDataset(Dataset):
     def collate_training(self, results):
         (_, word_embeddings, _, pos, preterms, tags) = zip(*results)
         lens = tuple(len(sentence) for sentence in word_embeddings)
-        tags = tuple(self.supertag_distances[tag] for tag in tags)
-        return tuple(pad_sequence(batch, padding_value=-1) for batch in (word_embeddings, pos, preterms, tags)) + (tensor(lens),)
+        tag_probs = tuple( self.truncated_distances[ts] for ts in tags )
+        return tuple(pad_sequence(batch, padding_value=-1) for batch in (word_embeddings, pos, preterms, tag_probs)) + (tensor(lens),)
 
     def collate_test(self, results):
         (_, word_embeddings, _, pos, preterms, tags) = zip(*results)
@@ -81,6 +106,6 @@ class SupertagDataset(Dataset):
         return tuple(pad_sequence(batch, padding_value=-1) for batch in (word_embeddings, pos, preterms, tags)) + (tensor(lens),)
 
     def collate_val(self, results):
-        (words, word_embeddings, trees, pos, preterms, tags) = zip(*results)
+        (words, word_embeddings, trees, pos, _, _) = zip(*results)
         lens = tuple(len(sentence) for sentence in words)
-        return (words, trees) + tuple(pad_sequence(batch, padding_value=-1) for batch in (word_embeddings, pos, preterms, tags)) + (tensor(lens),)
+        return (words, trees) + tuple(pad_sequence(batch, padding_value=-1) for batch in (word_embeddings, pos)) + (tensor(lens),)

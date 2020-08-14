@@ -14,6 +14,7 @@ from dataset import SupertagDataset, embedding_factory, TruncatedEmbedding, spli
 
 
 def load_data(config, tag_distance=1):
+    import numpy as np
     # setup corpus
     corpus = SupertagCorpus.read(open(config["Data"]["corpus"], "rb"))
     if isfile(config["Data"]["corpus"] + ".mat"):
@@ -26,11 +27,9 @@ def load_data(config, tag_distance=1):
 
     grammar = SupertagGrammar(corpus)
     data = SupertagDataset(corpus, embedding, tag_distance=tag_distance)
-    dims = data.dims
 
     # setup corpus split
     train, dev, test = split_data(config["Data"]["split"], data)
-    training_tags = set(st.item() for _, _, _, _, _, sts in train for st in sts)
 
     # setup data loaders
     shuffle = config["Data"].getboolean("shuffle")
@@ -38,12 +37,14 @@ def load_data(config, tag_distance=1):
     train_loader = DataLoader(train, batch_size=batch_size, shuffle=shuffle, collate_fn=data.collate_training)
     test_loader = DataLoader(dev, batch_size=batch_size, collate_fn=data.collate_test)
     val_loader = DataLoader(test, batch_size=batch_size, collate_fn=data.collate_val)
-    
-    return (train_loader, test_loader, val_loader), dims, training_tags, grammar
+
+    data.truncate_supertags(train.indices)
+
+    return (train_loader, test_loader, val_loader), data.dims, data.truncated_to_all, grammar
 
 
 def train_model(training_conf, data_conf=None, torch_device=device("cpu"), report_loss=print, report_histogram=None, start_state=None):
-    (training, test, val), dims, training_tags, grammar = load_data(data_conf, float(training_conf["tag_distance"]))
+    (training, test, val), dims, index_to_tag, grammar = load_data(data_conf, float(training_conf["tag_distance"]))
     epochs = int(training_conf["epochs"])
     lr, momentum, alpha = \
         (float(training_conf[k]) for k in ("lr", "momentum", "loss_balance"))
@@ -102,7 +103,7 @@ def train_model(training_conf, data_conf=None, torch_device=device("cpu"), repor
                 if report_histogram:
                     gold_positions = tagger.index_in_sorted(pr_stags, stags)
                     gold_positions = gold_positions[gold_positions != -1]
-                    gold_in_training = tensor([v.item() in training_tags for v in stags.flatten() if v.item() != -1])
+                    gold_in_training = stags[stags != -1] < (dims[3]-1)
                     histograms["pos/test/supertags"].append(gold_positions)
                     histograms["pos/test/supertags/trained"].append(gold_positions[gold_in_training])
                     histograms["pos/test/supertags/untrained"].append(gold_positions[~gold_in_training])
@@ -130,7 +131,7 @@ def train_model(training_conf, data_conf=None, torch_device=device("cpu"), repor
                 "iteration": iteration
             }, training_conf["save_file"])
 
-    validate(model, val, grammar)
+    validate(model, val, index_to_tag, grammar)
 
 
 def first_or_noparse(derivations, sentence, pos):
@@ -148,7 +149,7 @@ def unbin(parse):
     from discodop.treetransforms import unbinarize
     return unbinarize(removefanoutmarkers(parse))
 
-def validate(model, val_data, grammar):
+def validate(model, val_data, index_to_tag, grammar):
     from discodop.eval import Evaluator, readparam
     evaluator = Evaluator(readparam(config["Val"]["eval_param"]))
     model.eval()
@@ -156,13 +157,13 @@ def validate(model, val_data, grammar):
     with no_grad():
         i = 0
         for sample in val_data:
-            words, trees, wordembeddings, pos, prets, stags, lens = sample
-            (wordembeddings, pos, prets, stags, lens) = (t.to(torch_device) for t in (wordembeddings, pos, prets, stags, lens))
+            words, trees, wordembeddings, pos, lens = sample
+            (wordembeddings, pos, lens) = (t.to(torch_device) for t in (wordembeddings, pos, lens))
             (pret_scores, stag_scores) = model((wordembeddings, pos, lens))
             preterminals, supertags, weights = tagger.n_best_tags((pret_scores, stag_scores), k)
             for batch_idx, sequence_len in enumerate(lens):
                 sequence_preterminals = preterminals[0:sequence_len, batch_idx].cpu().numpy()
-                sequence_supertags = supertags[0:sequence_len, batch_idx]
+                sequence_supertags = index_to_tag[supertags[0:sequence_len, batch_idx]]
                 sequence_weights = weights[0:sequence_len, batch_idx]
                 sequence_pos = pos[0:sequence_len, batch_idx].cpu().numpy()
                 derivs = grammar.deintegerize_and_parse(words[batch_idx], sequence_pos, sequence_preterminals, sequence_supertags, sequence_weights, 1)
