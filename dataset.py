@@ -144,14 +144,14 @@ class SupertagDataset(Dataset):
         (_, word_embeddings, _, pos, preterms, tags) = zip(*results)
         lens = tuple(len(sentence) for sentence in word_embeddings)
         tag_probs = tuple( self.supertag_confusion[ts] for ts in tags )
-        return tuple(pad_sequence(batch, padding_value=-2) for batch in (word_embeddings, pos, preterms, tag_probs)) + (tensor(lens),)
+        return tuple(pad_sequence(batch, padding_value=-1) for batch in (word_embeddings, pos, preterms, tag_probs)) + (tensor(lens),)
 
     def collate_test(self, results):
         (_, word_embeddings, _, pos, preterms, tags) = zip(*results)
         lens = tensor(tuple(len(sentence) for sentence in word_embeddings))
         word_embeddings, pos = pad_sequence(word_embeddings), pad_sequence(pos)
         preterms = pad_sequence(preterms, padding_value=-1)
-        tags = pad_sequence(tags, padding_value=-2)
+        tags = pad_sequence(tags, padding_value=-1)
         return (word_embeddings, pos, preterms, tags, lens)
 
     def collate_val(self, results):

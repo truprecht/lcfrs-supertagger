@@ -63,14 +63,13 @@ class tagger(Module):
     def train_loss(self, scores, gold):
         from torch.nn.functional import cross_entropy
         (cpt, cst, gpt, gst) = (t.flatten(end_dim=1) for t in (*scores, *gold))
-        return cross_entropy(cpt, gpt, ignore_index=-1), cross_entropy(cst, gst, ignore_index=-2)
+        return cross_entropy(cpt, gpt, ignore_index=-1), cross_entropy(cst, gst, ignore_index=-1)
 
     def test_loss(self, scores, gold):
         from torch.nn.functional import nll_loss
         (cpt, cst, gpt, gst) = (t.flatten(end_dim=1) for t in (*scores, *gold))
         (cpt, cst) = (t.log_softmax(dim=1) for t in (cpt, cst))
-        cst = cat(( zeros((len(cst), 1), device=cst.device).log(), cst ), dim=1 )
-        return nll_loss(cpt, gpt, ignore_index=-1), nll_loss(cst, gst+1, ignore_index=-1)
+        return nll_loss(cpt, gpt, ignore_index=-1), nll_loss(cst, gst, ignore_index=-1)
 
     def predict(self, x, k=1):
         scores = self.forward(x)
