@@ -69,7 +69,7 @@ class tagger(Module):
         from torch.nn.functional import nll_loss
         (cpt, cst, gpt, gst) = (t.flatten(end_dim=1) for t in (*scores, *gold))
         (cpt, cst) = (t.log_softmax(dim=1) for t in (cpt, cst))
-        cst = cat(( zeros((len(cst), 1)).log(), cst ), dim=1 )
+        cst = cat(( zeros((len(cst), 1), device=cst.device).log(), cst ), dim=1 )
         return nll_loss(cpt, gpt, ignore_index=-1), nll_loss(cst, gst+1, ignore_index=-1)
 
     def predict(self, x, k=1):
