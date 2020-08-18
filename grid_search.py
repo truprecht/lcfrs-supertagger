@@ -3,7 +3,7 @@ from torch import device, cuda
 
 from ray import tune
 from functools import partial
-from training import train_model, read_config
+from training import load_data, train_model, read_config, tagger
 
 config = read_config()
 # use absolute path, b/c ray can't handle relative ones
@@ -15,6 +15,15 @@ def tune_report(scores, epoch_or_iteration):
 torch_device = device("cpu")
 ray_devices = { "cpu": 1, "gpu": 1 } if torch_device.type == "cuda" else { "cpu": 1 }
 print(f"running on device {torch_device}")
+
+def setup_and_train_model(training_conf, data_conf=None):
+    (train, test, _), data = load_data(data_conf["Data"], \
+        tag_distance=int(training_conf["tag_distance"]))
+
+    model = tagger(data.dims, tagger.Hyperparameters.from_dict(training_conf)).double()
+    model.to(torch_device)
+    train_model(model, training_conf, train, test, \
+        torch_device=torch_device, report_loss=tune_report)
 
 grid_axes = set(config["Gridsearch"]["grid_axes"].split())
 choice_axes = set(config["Gridsearch"]["choice_axes"].split())
@@ -29,7 +38,7 @@ for key in config["Gridsearch"]:
         tune_parameters[key] = config["Gridsearch"][key]
 
 analysis = tune.run(
-    partial(train_model, data_conf=config, torch_device=torch_device, report_loss=tune_report),
+    partial(setup_and_train_model, data_conf=config),
     name="Supertag-gridsearch",
     config=tune_parameters,
     num_samples=grid_samples,

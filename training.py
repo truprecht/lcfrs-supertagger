@@ -13,50 +13,62 @@ from tagger import tagger
 from dataset import SupertagDataset, embedding_factory, TruncatedEmbedding, split_data
 
 
+def main():
+    config = read_config()
+
+    torch_device = device("cuda" if cuda.is_available() else "cpu")
+    print(f"running on device {torch_device}")
+    try:
+        start_state = load(config["Training"]["save_file"], map_location=torch_device)
+    except:
+        start_state = None
+
+    (train, test, val), data = load_data(config["Data"], \
+        tag_distance=int(config["Training"]["tag_distance"]))
+
+    model = tagger(data.dims, tagger.Hyperparameters.from_dict(config["Training"])).double()
+    model.to(torch_device)
+    train_model(model, config["Training"], train, test, torch_device=torch_device, \
+        report_loss=report_tensorboard_scalars, start_state=start_state, \
+        report_histogram=report_tensorboard_histogram)
+
+    data.evaluate(
+        predictions(model, val, k=int(config["Val"]["top_tags"]), torch_device=torch_device),
+        paramfilename=config["Val"]["eval_param"])
+
 def load_data(config, tag_distance=1):
-    import numpy as np
     # setup corpus
-    corpus = SupertagCorpus.read(open(config["Data"]["corpus"], "rb"))
-    if isfile(config["Data"]["corpus"] + ".mat"):
-        corpus.read_confusion_matrix(open(config["Data"]["corpus"]+".mat", "rb"))
+    corpus = SupertagCorpus.read(open(config["corpus"], "rb"))
+    if isfile(config["corpus"] + ".mat"):
+        corpus.read_confusion_matrix(open(config["corpus"]+".mat", "rb"))
     vocabulary = set(word for sentence in corpus.sent_corpus for word in sentence)
 
     # setup word embeddings
-    embedding = embedding_factory(config["Data"]["word_embedding"])
+    embedding = embedding_factory(config["word_embedding"])
     embedding = TruncatedEmbedding(embedding, vocabulary)
 
-    grammar = SupertagGrammar(corpus)
     data = SupertagDataset(corpus, embedding, tag_distance=tag_distance)
 
     # setup corpus split
-    train, dev, test = split_data(config["Data"]["split"], data)
+    train, dev, test = split_data(config["split"], data)
 
     # setup data loaders
-    shuffle = config["Data"].getboolean("shuffle")
-    batch_size = int(config["Data"]["batch_size"])
-    train_loader = DataLoader(train, batch_size=batch_size, shuffle=shuffle, collate_fn=data.collate_training)
-    test_loader = DataLoader(dev, batch_size=batch_size, collate_fn=data.collate_test)
-    val_loader = DataLoader(test, batch_size=batch_size, collate_fn=data.collate_val)
+    shuffle = config.getboolean("shuffle")
+    batch_size = int(config["batch_size"])
+    train_loader = DataLoader(train, batch_size=batch_size, shuffle=shuffle, collate_fn=data.collate_test, pin_memory=True)
+    test_loader = DataLoader(dev, batch_size=batch_size, collate_fn=data.collate_test, pin_memory=True)
+    val_loader = DataLoader(test, batch_size=batch_size, collate_fn=data.collate_val, pin_memory=True)
 
     data.truncate_supertags(train.indices)
 
-    return (train_loader, test_loader, val_loader), data.dims, data.truncated_to_all, grammar
+    return (train_loader, test_loader, val_loader), data
 
 
-def train_model(training_conf, data_conf=None, torch_device=device("cpu"), report_loss=print, report_histogram=None, start_state=None):
-    (training, test, val), dims, index_to_tag, grammar = load_data(data_conf, float(training_conf["tag_distance"]))
+def train_model(model, training_conf, train_data, test_data, torch_device=device("cpu"), report_loss=print, report_histogram=None, start_state=None):
     epochs = int(training_conf["epochs"])
     lr, momentum, alpha = \
         (float(training_conf[k]) for k in ("lr", "momentum", "loss_balance"))
     save_epochs = int(training_conf["save_epochs"]) if "save_epochs" in training_conf else 0
-
-    # setup Model
-    model = tagger(dims, tagger.Hyperparameters.from_dict(training_conf))
-    model.double()
-    model.to(torch_device)
-    ce_loss = CrossEntropyLoss(ignore_index=-1, reduction='mean')
-    softmax = LogSoftmax(dim=1)
-    kl_loss = KLDivLoss(reduction='batchmean')
     opt = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
 
     iteration = 0
@@ -68,13 +80,11 @@ def train_model(training_conf, data_conf=None, torch_device=device("cpu"), repor
         iteration = start_state["iteration"]
 
     for epoch in range(start_epoch+1, epochs+1):
-        for sample in training:
+        for sample in train_data:
             iteration += 1
             words, pos, prets, stags, lens = (t.to(torch_device) for t in sample)
             opt.zero_grad()
-            (pr_prets, pr_stags) = model.forward((words, pos, lens))
-            mask = model.get_mask(lens)
-            l1, l2 = ce_loss(pr_prets[mask], prets[mask]), kl_loss(softmax(pr_stags[mask]), stags[mask])
+            l1, l2 = model.train_loss(model.forward((words, pos, lens)), (prets, stags))
             l = (1-alpha) * l1 + alpha * l2
             report_loss({ "loss/train/preterminals": l1.item(),
                      "loss/train/supertags": l2.item(),
@@ -84,44 +94,29 @@ def train_model(training_conf, data_conf=None, torch_device=device("cpu"), repor
             opt.step()
 
         with no_grad():
-            dl1, dl2 = 0.0, 0.0
-            histograms = {
-                "pos/test/supertags": [],
-                "pos/test/supertags/trained": [],
-                "pos/test/supertags/untrained": [],
-                "score/test/supertags": [],
-                "score/test/supertags/trained": [],
-                "score/test/supertags/untrained": [] }
-            for sample in test:
-                words, pos, prets, stags, lens = sample
+            dl1, dl2, dl = 0.0, 0.0, 0.0
+            positions = []
+            for sample in test_data:
                 words, pos, prets, stags, lens = (t.to(torch_device) for t in sample)
                 (pr_prets, pr_stags) = model.forward((words, pos, lens))
-                mask = model.get_mask(lens)
-                l1, l2 = ce_loss(pr_prets[mask], prets[mask]), ce_loss(pr_stags[mask], stags[mask])
+                l1, l2 = model.test_loss((pr_prets, pr_stags), (prets, stags))
                 dl1 += l1.item()
                 dl2 += l2.item()
+                dl += ((1-alpha) * l1 + alpha * l2).item()
                 if report_histogram:
                     gold_positions = tagger.index_in_sorted(pr_stags, stags)
-                    gold_positions = gold_positions[gold_positions != -1]
-                    gold_in_training = stags[stags != -1] < (dims[3]-1)
-                    histograms["pos/test/supertags"].append(gold_positions)
-                    histograms["pos/test/supertags/trained"].append(gold_positions[gold_in_training])
-                    histograms["pos/test/supertags/untrained"].append(gold_positions[~gold_in_training])
-                    not_padded = (prets != -1)
-                    gold_scores = pr_prets.gather(2, (prets * not_padded).unsqueeze(2))
-                    gold_scores = gold_scores[not_padded]
-                    histograms["score/test/supertags"].append(gold_scores)
-                    histograms["score/test/supertags/trained"].append(gold_scores[gold_in_training])
-                    histograms["score/test/supertags/untrained"].append(gold_scores[~gold_in_training])
-            dl1 /= len(test)
-            dl2 /= len(test)
+                    gold_positions[gold_positions == -1] = pr_stags.shape[2]
+                    positions.append(gold_positions[gold_positions >= 0])
+            dl1 /= len(test_data)
+            dl2 /= len(test_data)
+            dl /= len(test_data)
 
             report_loss({ "loss/test/preterminals": dl1,
                      "loss/test/supertags": dl2,
-                     "loss/test/combined": dl1+dl2 },
+                     "loss/test/combined": dl },
                      epoch )
             if report_histogram:
-                report_histogram({ k: cat(values) for k, values in histograms.items() }, epoch)
+                report_histogram({ "pos/test/supertags": cat(positions) }, epoch)
 
         if save_epochs and epoch % save_epochs == 0:
             save({
@@ -131,46 +126,17 @@ def train_model(training_conf, data_conf=None, torch_device=device("cpu"), repor
                 "iteration": iteration
             }, training_conf["save_file"])
 
-    validate(model, val, index_to_tag, grammar)
+    return model
 
 
-def first_or_noparse(derivations, sentence, pos):
-    from discodop.lexcorpus import to_parse_tree
-    try:
-        deriv = next(derivations)
-        deriv = to_parse_tree(deriv)
-        return deriv
-    except StopIteration:
-        leaves = (f"({p} {i})" for p, i in zip(pos, range(len(sentence))))
-        return ParentedTree(f"(NOPARSE {' '.join(leaves)})")
-
-def unbin(parse):
-    from discodop.treebanktransforms import removefanoutmarkers
-    from discodop.treetransforms import unbinarize
-    return unbinarize(removefanoutmarkers(parse))
-
-def validate(model, val_data, index_to_tag, grammar):
-    from discodop.eval import Evaluator, readparam
-    evaluator = Evaluator(readparam(config["Val"]["eval_param"]))
+def predictions(model, val_data, k=1, torch_device=device("cpu")):
     model.eval()
-    k = int(config["Val"]["top_tags"])
     with no_grad():
-        i = 0
         for sample in val_data:
             words, trees, wordembeddings, pos, lens = sample
-            (wordembeddings, pos, lens) = (t.to(torch_device) for t in (wordembeddings, pos, lens))
-            (pret_scores, stag_scores) = model((wordembeddings, pos, lens))
-            preterminals, supertags, weights = tagger.n_best_tags((pret_scores, stag_scores), k)
-            for batch_idx, sequence_len in enumerate(lens):
-                sequence_preterminals = preterminals[0:sequence_len, batch_idx].cpu().numpy()
-                sequence_supertags = index_to_tag[supertags[0:sequence_len, batch_idx]]
-                sequence_weights = weights[0:sequence_len, batch_idx]
-                sequence_pos = pos[0:sequence_len, batch_idx].cpu().numpy()
-                derivs = grammar.deintegerize_and_parse(words[batch_idx], sequence_pos, sequence_preterminals, sequence_supertags, sequence_weights, 1)
-                deriv = first_or_noparse(derivs, words[batch_idx], [grammar.pos[n] for n in sequence_pos])
-                evaluator.add(i, unbin(trees[batch_idx]), list(words[batch_idx]), unbin(deriv), list(words[batch_idx]))
-                i += 1
-        print(evaluator.summary())
+            x = tuple(t.to(torch_device) for t in (wordembeddings, pos, lens))
+            for sent, gold, (pos, preterms, supertags, weights) in zip(words, trees, model.predict(x, k)):
+                yield sent, gold, pos, preterms, supertags, weights
 
 
 writer = SummaryWriter()
@@ -200,14 +166,4 @@ def read_config():
 
 
 if __name__ == "__main__":
-    config = read_config()
-    training_conf = config["Training"]
-    torch_device = device("cuda" if cuda.is_available() else "cpu")
-    print(f"running on device {torch_device}")
-    try:
-        start_state = load(config["Training"]["save_file"], map_location=torch_device)
-    except:
-        start_state = None
-    train_model(training_conf, config, torch_device=torch_device, \
-        report_loss=report_tensorboard_scalars, start_state=start_state, \
-        report_histogram=report_tensorboard_histogram)
+    main()

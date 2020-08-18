@@ -1,5 +1,5 @@
 from torch.nn import LSTM, Linear, Module, Embedding, Dropout, Sequential, ReLU
-from torch import cat, zeros, ones
+from torch import cat, zeros, ones, tensor, full
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence
 from collections import namedtuple
 
@@ -60,6 +60,28 @@ class tagger(Module):
         x = self.ffs(x)
         return x.split((self.preterminals, self.supertags), dim=2)
 
+    def train_loss(self, scores, gold):
+        from torch.nn.functional import cross_entropy
+        (cpt, cst, gpt, gst) = (t.flatten(end_dim=1) for t in (*scores, *gold))
+        return cross_entropy(cpt, gpt, ignore_index=-1), cross_entropy(cst, gst, ignore_index=-2)
+
+    def test_loss(self, scores, gold):
+        from torch.nn.functional import nll_loss
+        (cpt, cst, gpt, gst) = (t.flatten(end_dim=1) for t in (*scores, *gold))
+        (cpt, cst) = (t.log_softmax(dim=1) for t in (cpt, cst))
+        cst = cat(( zeros((len(cst), 1)).log(), cst ), dim=1 )
+        return nll_loss(cpt, gpt, ignore_index=-1), nll_loss(cst, gst+1, ignore_index=-1)
+
+    def predict(self, x, k=1):
+        scores = self.forward(x)
+        pt, sts, ws = tagger.n_best_tags(scores, k)
+        for idx, sentence_len in enumerate(x[2]):
+            preterminals = pt[0:sentence_len, idx].cpu().numpy()
+            supertags = sts[0:sentence_len, idx]
+            weights = ws[0:sentence_len, idx]
+            pos = x[1][0:sentence_len, idx].cpu().numpy()
+            yield pos, preterminals, supertags, weights
+
     @classmethod
     def n_best_tags(cls, y, n):
         import numpy as np
@@ -76,12 +98,14 @@ class tagger(Module):
 
     @classmethod
     def index_in_sorted(cls, y, gold_indices):
-        padding = gold_indices == -1
+        padding = gold_indices == -2
+        not_trained = gold_indices == -1
         # set padding in gold_indices to 0
-        gold_indices = gold_indices * (~padding)
+        gold_indices = gold_indices * (~(padding | not_trained))
         gold_scores = y.gather(2, gold_indices.unsqueeze(2))
         gold_position = (y > gold_scores).sum(dim=2)
-        gold_position[padding] = -1
+        gold_position[padding] = -2
+        gold_position[not_trained] = -1
         return gold_position
 
 def test_dims():
