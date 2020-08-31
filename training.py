@@ -2,7 +2,7 @@ from discodop.lexcorpus import SupertagCorpus
 from discodop.lexgrammar import SupertagGrammar
 from discodop.tree import ParentedTree
 
-from torch import cat, optim, save, load, no_grad, device, cuda, tensor
+from torch import cat, optim, save, load, no_grad, device, cuda, tensor, zeros
 from torch.nn import CrossEntropyLoss, KLDivLoss, LogSoftmax
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, Dataset, random_split
@@ -34,7 +34,7 @@ def main():
 
     data.evaluate(
         predictions(model, val, k=int(config["Val"]["top_tags"]), torch_device=torch_device),
-        paramfilename=config["Val"]["eval_param"])
+        paramfilename=config["Val"]["eval_param"], fallback=float(config["Val"]["fallback"]))
 
 def load_data(config, tag_distance=1):
     # setup corpus
@@ -94,15 +94,15 @@ def train_model(model, training_conf, train_data, test_data, torch_device=device
             opt.step()
 
         with no_grad():
-            dl1, dl2, dl = 0.0, 0.0, 0.0
+            dl1, dl2, dl = tensor(0.0), tensor(0.0), tensor(0.0)
             positions = []
             for sample in test_data:
                 words, pos, prets, stags, lens = (t.to(torch_device) for t in sample)
                 (pr_prets, pr_stags) = model.forward((words, pos, lens))
                 l1, l2 = model.test_loss((pr_prets, pr_stags), (prets, stags))
-                dl1 += l1.item()
-                dl2 += l2.item()
-                dl += ((1-alpha) * l1 + alpha * l2).item()
+                dl1 += l1
+                dl2 += l2
+                dl += (1-alpha) * l1 + alpha * l2
                 if report_histogram:
                     gold_positions = tagger.index_in_sorted(pr_stags, stags)
                     gold_positions[gold_positions == -1] = pr_stags.shape[2]
@@ -111,11 +111,11 @@ def train_model(model, training_conf, train_data, test_data, torch_device=device
             dl2 /= len(test_data)
             dl /= len(test_data)
 
-            report_loss({ "loss/test/preterminals": dl1,
-                     "loss/test/supertags": dl2,
-                     "loss/test/combined": dl },
+            report_loss({ "loss/test/preterminals": dl1.item(),
+                     "loss/test/supertags": dl2.item(),
+                     "loss/test/combined": dl.item() },
                      epoch )
-            if report_histogram:
+            if positions and report_histogram:
                 report_histogram({ "pos/test/supertags": cat(positions) }, epoch)
 
         if save_epochs and epoch % save_epochs == 0:

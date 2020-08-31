@@ -93,7 +93,7 @@ class SupertagDataset(Dataset):
         assert self._supertag_confusion.shape == (len(self.truncated_to_all), len(self.truncated_to_all))
         return self._supertag_confusion
 
-    def evaluate(self, sequence, paramfilename=None):
+    def evaluate(self, sequence, paramfilename=None, fallback=0.0):
         from discodop.eval import Evaluator, readparam
         from discodop.lexcorpus import to_parse_tree
         from discodop.lexgrammar import SupertagGrammar
@@ -101,7 +101,7 @@ class SupertagDataset(Dataset):
         from discodop.treebanktransforms import removefanoutmarkers
         from discodop.treetransforms import unbinarize
 
-        grammar = SupertagGrammar(self.corpus)
+        grammar = SupertagGrammar(self.corpus, fallback_prob=fallback)
         evaluator = Evaluator(readparam(paramfilename))
         for i, (sent, gold, pos, preterms, supertags, weights) in enumerate(sequence):
             supertags = self.truncated_to_all.numpy()[supertags]
@@ -158,4 +158,4 @@ class SupertagDataset(Dataset):
         (words, word_embeddings, trees, pos, _, _) = zip(*results)
         lens = tensor(tuple(len(sentence) for sentence in words))
         word_embeddings, pos = pad_sequence(word_embeddings), pad_sequence(pos)
-        return (words, trees, word_embeddings, pos, tensor(lens))
+        return (words, trees, word_embeddings, pos, lens)
