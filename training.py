@@ -11,65 +11,65 @@ from os.path import isfile
 
 from tagger import tagger
 from dataset import SupertagDataset, embedding_factory, TruncatedEmbedding, split_data
+from parameters import Parameters
 
-
+evalconfig = Parameters(toptags=(int, 5), evalfilename=(str, None), fallback=(float, 0.0))
 def main():
     config = read_config()
 
     torch_device = device("cuda" if cuda.is_available() else "cpu")
+    tc = trainparam(**config["Training"])
     print(f"running on device {torch_device}")
     try:
-        start_state = load(config["Training"]["save_file"], map_location=torch_device)
+        start_state = load(tc.checkpoint_filename, map_location=torch_device)
     except:
         start_state = None
 
-    (train, test, val), data = load_data(config["Data"], \
-        tag_distance=int(config["Training"]["tag_distance"]))
+    (train, test, val), data = load_data(loadconfig(**config["Data"]))
 
-    model = tagger(data.dims, tagger.Hyperparameters.from_dict(config["Training"])).double()
-    model.to(torch_device)
-    train_model(model, config["Training"], train, test, torch_device=torch_device, \
+    model = tagger(data.dims, tc).double().to(torch_device)
+    train_model(model, tc, train, test, torch_device=torch_device, \
         report_loss=report_tensorboard_scalars, start_state=start_state, \
         report_histogram=report_tensorboard_histogram)
 
+    ec = evalconfig(**config["Val"])
     data.evaluate(
-        predictions(model, val, k=int(config["Val"]["top_tags"]), torch_device=torch_device),
-        paramfilename=config["Val"]["eval_param"], fallback=float(config["Val"]["fallback"]))
+        predictions(model, val, k=ec.toptags, torch_device=torch_device),
+        paramfilename=ec.evalfilename, fallback=ec.fallback)
 
-def load_data(config, tag_distance=1):
+loadconfig = Parameters(
+    corpusfilename=(str, None), wordembedding=(str, None),
+    split=(str, None), batchsize=(int, 1), shuffle=(bool, False))
+def load_data(config):
     # setup corpus
-    corpus = SupertagCorpus.read(open(config["corpus"], "rb"))
-    if isfile(config["corpus"] + ".mat"):
-        corpus.read_confusion_matrix(open(config["corpus"]+".mat", "rb"))
+    corpus = SupertagCorpus.read(open(config.corpusfilename, "rb"))
     vocabulary = set(word for sentence in corpus.sent_corpus for word in sentence)
 
     # setup word embeddings
-    embedding = embedding_factory(config["word_embedding"])
+    embedding = embedding_factory(config.wordembedding)
     embedding = TruncatedEmbedding(embedding, vocabulary)
 
-    data = SupertagDataset(corpus, embedding, tag_distance=tag_distance)
+    data = SupertagDataset(corpus, embedding)
 
     # setup corpus split
-    train, dev, test = split_data(config["split"], data)
+    train, dev, test = split_data(config.split, data)
 
     # setup data loaders
-    shuffle = config.getboolean("shuffle")
-    batch_size = int(config["batch_size"])
-    train_loader = DataLoader(train, batch_size=batch_size, shuffle=shuffle, collate_fn=data.collate_test, pin_memory=True)
-    test_loader = DataLoader(dev, batch_size=batch_size, collate_fn=data.collate_test, pin_memory=True)
-    val_loader = DataLoader(test, batch_size=batch_size, collate_fn=data.collate_val, pin_memory=True)
+    train_loader = DataLoader(train, batch_size=config.batchsize, shuffle=config.shuffle, collate_fn=data.collate_test, pin_memory=True)
+    test_loader = DataLoader(dev, batch_size=config.batchsize, collate_fn=data.collate_test, pin_memory=True)
+    val_loader = DataLoader(test, batch_size=config.batchsize, collate_fn=data.collate_val, pin_memory=True)
 
     data.truncate_supertags(train.indices)
 
     return (train_loader, test_loader, val_loader), data
 
-
-def train_model(model, training_conf, train_data, test_data, torch_device=device("cpu"), report_loss=print, report_histogram=None, start_state=None):
-    epochs = int(training_conf["epochs"])
-    lr, momentum, alpha = \
-        (float(training_conf[k]) for k in ("lr", "momentum", "loss_balance"))
-    save_epochs = int(training_conf["save_epochs"]) if "save_epochs" in training_conf else 0
-    opt = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+trainparam = Parameters(
+    epochs=(int, 1), checkpoint_epochs=(int, 0), checkpoint_filename=(str, None),
+    lr=(float, 0.01), momentum=(float, 0.9),
+    loss_balance=(float, 0.5))
+trainparam = Parameters.merge(trainparam, tagger.hyperparam)
+def train_model(model, config, train_data, test_data, torch_device=device("cpu"), report_loss=print, report_histogram=None, start_state=None):
+    opt = optim.SGD(model.parameters(), lr=config.lr, momentum=config.momentum)
 
     iteration = 0
     start_epoch = 0
@@ -79,13 +79,14 @@ def train_model(model, training_conf, train_data, test_data, torch_device=device
         start_epoch = start_state["epoch"]
         iteration = start_state["iteration"]
 
-    for epoch in range(start_epoch+1, epochs+1):
+    for epoch in range(start_epoch+1, config.epochs+1):
         for sample in train_data:
             iteration += 1
-            words, pos, prets, stags, lens = (t.to(torch_device) for t in sample)
+            print(iteration)
+            sample = SupertagDataset.trainrecord(*(batch.to(torch_device) for batch in sample))
             opt.zero_grad()
-            l1, l2 = model.train_loss(model.forward((words, pos, lens)), (prets, stags))
-            l = (1-alpha) * l1 + alpha * l2
+            l1, l2 = model.train_loss(model.forward(*sample[:7]), sample[7:])
+            l = (1-config.loss_balance) * l1 + config.loss_balance * l2
             report_loss({ "loss/train/preterminals": l1.item(),
                      "loss/train/supertags": l2.item(),
                      "loss/train/combined": l.item() },
@@ -97,14 +98,14 @@ def train_model(model, training_conf, train_data, test_data, torch_device=device
             dl1, dl2, dl = tensor(0.0), tensor(0.0), tensor(0.0)
             positions = []
             for sample in test_data:
-                words, pos, prets, stags, lens = (t.to(torch_device) for t in sample)
-                (pr_prets, pr_stags) = model.forward((words, pos, lens))
-                l1, l2 = model.test_loss((pr_prets, pr_stags), (prets, stags))
+                sample = SupertagDataset.trainrecord(*(batch.to(torch_device) for batch in sample))
+                (pr_prets, pr_stags) = model.forward(*sample[:7])
+                l1, l2 = model.test_loss((pr_prets, pr_stags), sample[7:])
                 dl1 += l1
                 dl2 += l2
-                dl += (1-alpha) * l1 + alpha * l2
+                dl += (1-config.loss_balance) * l1 + config.loss_balance * l2
                 if report_histogram:
-                    gold_positions = tagger.index_in_sorted(pr_stags, stags)
+                    gold_positions = tagger.index_in_sorted(pr_stags, sample.tags)
                     gold_positions[gold_positions == -1] = pr_stags.shape[2]
                     positions.append(gold_positions[gold_positions >= 0])
             dl1 /= len(test_data)
@@ -118,13 +119,13 @@ def train_model(model, training_conf, train_data, test_data, torch_device=device
             if positions and report_histogram:
                 report_histogram({ "pos/test/supertags": cat(positions) }, epoch)
 
-        if save_epochs and epoch % save_epochs == 0:
+        if config.checkpoint_epochs and epoch % config.checkpoint_epochs == 0:
             save({
                 "epoch": epoch,
                 "model": model.state_dict(),
                 "optimizer": opt.state_dict(),
                 "iteration": iteration
-            }, training_conf["save_file"])
+            }, config.checkpoint_filename)
 
     return model
 
@@ -133,9 +134,8 @@ def predictions(model, val_data, k=1, torch_device=device("cpu")):
     model.eval()
     with no_grad():
         for sample in val_data:
-            words, trees, wordembeddings, pos, lens = sample
-            x = tuple(t.to(torch_device) for t in (wordembeddings, pos, lens))
-            for sent, gold, (pos, preterms, supertags, weights) in zip(words, trees, model.predict(x, k)):
+            x = tuple(batch.to(torch_device) for batch in sample[:7])
+            for sent, gold, (pos, preterms, supertags, weights) in zip(sample.words, sample.trees, model.predict(*x, k)):
                 yield sent, gold, pos, preterms, supertags, weights
 
 

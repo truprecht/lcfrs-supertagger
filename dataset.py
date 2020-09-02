@@ -5,6 +5,7 @@ from torch import tensor, zeros, cat, unsqueeze, from_numpy, is_tensor, arange
 from torchtext.vocab import Vectors, FastText
 from torch.nn.functional import softmax
 from torch.utils.data import random_split, Subset
+from collections import namedtuple
 
 import numpy as np
 
@@ -62,6 +63,9 @@ def embedding_factory(def_str):
     raise NotImplementedError()
 
 class SupertagDataset(Dataset):
+    trainrecord = namedtuple("trainrecord", "chars starts ends charlens wordembeds pos lens prets tags")
+    testrecord = namedtuple("testrecord", "chars starts ends charlens wordembeds pos lens words trees")
+
     def __init__(self, corpus, word_embeddings, tag_distance=1):
         # TODO: sort by length
         self.corpus = corpus
@@ -129,33 +133,38 @@ class SupertagDataset(Dataset):
 
     def __getitem__(self, key):
         words = self.corpus.sent_corpus[key]
-        embedded_words = self.word_embeddings.get_vecs_by_tokens(words)
+        chars = tensor(list(" ".join(words).encode("utf8")))
+        spaces = cat((tensor([-1]), (chars==32).nonzero(as_tuple=False).squeeze(-1), tensor([len(chars)])))
+        embedded_words = self.word_embeddings.get_vecs_by_tokens(words, lower_case_backup=True)
         pos = tensor(self.corpus.pos_corpus[key])
         preterms = tensor(self.corpus.preterm_corpus[key])
         supertags = tensor(self.corpus.supertag_corpus[key])
         tree = self.corpus.tree_corpus[key]
-        return words, embedded_words, tree, \
-            pos, preterms, self.all_to_truncated[supertags]
+        return chars, spaces[:-1]+1, spaces[1:]-1, embedded_words, pos, \
+            preterms, self.all_to_truncated[supertags], words, tree
 
     def __len__(self):
         return len(self.corpus.sent_corpus)
 
-    def collate_training(self, results):
-        (_, word_embeddings, _, pos, preterms, tags) = zip(*results)
-        lens = tuple(len(sentence) for sentence in word_embeddings)
-        tag_probs = tuple( self.supertag_confusion[ts] for ts in tags )
-        return tuple(pad_sequence(batch, padding_value=-1) for batch in (word_embeddings, pos, preterms, tag_probs)) + (tensor(lens),)
+    # def collate_training(self, results):
+    #     (_, word_embeddings, _, pos, preterms, tags) = zip(*results)
+    #     lens = tuple(len(sentence) for sentence in word_embeddings)
+    #     tag_probs = tuple( self.supertag_confusion[ts] for ts in tags )
+    #     return tuple(pad_sequence(batch, padding_value=-1) for batch in (word_embeddings, pos, preterms, tag_probs)) + (tensor(lens),)
+
+    def collate_common(self, results):
+        results = tuple(zip(*results))
+        slens = tensor([len(embeds) for embeds in results[3]])
+        clens = tensor([len(chars) for chars in results[0]])
+        padded_with_0 = (pad_sequence(seq) for seq in results[:5])
+        padded_with_neg1 = (pad_sequence(seq, padding_value=-1) for seq in results[5:7])
+        unpadded = results[7:]
+        return *padded_with_0, *padded_with_neg1, *unpadded, clens, slens
 
     def collate_test(self, results):
-        (_, word_embeddings, _, pos, preterms, tags) = zip(*results)
-        lens = tensor(tuple(len(sentence) for sentence in word_embeddings))
-        word_embeddings, pos = pad_sequence(word_embeddings), pad_sequence(pos)
-        preterms = pad_sequence(preterms, padding_value=-1)
-        tags = pad_sequence(tags, padding_value=-1)
-        return (word_embeddings, pos, preterms, tags, lens)
+        chars, starts, ends, wordembeddings, pos, preterms, tags, _, _, clens, slens = self.collate_common(results)
+        return SupertagDataset.trainrecord(chars, starts, ends, clens, wordembeddings, pos, slens, preterms, tags)
 
     def collate_val(self, results):
-        (words, word_embeddings, trees, pos, _, _) = zip(*results)
-        lens = tensor(tuple(len(sentence) for sentence in words))
-        word_embeddings, pos = pad_sequence(word_embeddings), pad_sequence(pos)
-        return (words, trees, word_embeddings, pos, lens)
+        chars, starts, ends, wordembeddings, pos, _, _, words, trees, clens, slens = self.collate_common(results)
+        return SupertagDataset.testrecord(chars, starts, ends, clens, wordembeddings, pos, slens, words, trees)
