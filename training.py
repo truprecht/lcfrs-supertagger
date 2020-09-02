@@ -95,7 +95,7 @@ def train_model(model, config, train_data, test_data, torch_device=device("cpu")
             opt.step()
 
         with no_grad():
-            dl1, dl2, dl = tensor(0.0), tensor(0.0), tensor(0.0)
+            dl1, dl2, dl = zeros(3, device=torch_device)
             positions = []
             for sample in test_data:
                 sample = SupertagDataset.trainrecord(*(batch.to(torch_device) for batch in sample))
