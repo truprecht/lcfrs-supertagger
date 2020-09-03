@@ -17,8 +17,8 @@ torch_device = device("cpu")
 ray_devices = { "cpu": 1, "gpu": 1 } if torch_device.type == "cuda" else { "cpu": 1 }
 print(f"running on device {torch_device}")
 
-def setup_and_train_model(data_conf, test_conf, training_conf):
-    (train, test, _), data = load_data(loadconfig(**data_conf))
+def setup_and_train_model(data_conf, test_conf, vector_cache, training_conf):
+    (train, test, _), data = load_data(loadconfig(**data_conf), vector_cache)
 
     tc = trainparam(**training_conf, **test_conf)
     model = tagger(data.dims, tc).double()
@@ -39,7 +39,7 @@ for key in config["Gridsearch"]:
         tune_parameters[key] = config["Gridsearch"][key]
 
 analysis = tune.run(
-    partial(setup_and_train_model, config["Data"], config["Test"]),
+    partial(setup_and_train_model, config["Data"], config["Test"], abspath("./.vector_cache")),
     name="Supertag-gridsearch",
     config=tune_parameters,
     num_samples=grid_samples,

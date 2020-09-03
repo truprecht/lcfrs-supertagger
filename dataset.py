@@ -51,15 +51,15 @@ class TruncatedEmbedding(Vectors):
                 vectors.append(embedding[word].unsqueeze(0))
         self.vectors = cat(vectors)
 
-def embedding_factory(def_str):
+def embedding_factory(def_str, vector_cache):
     def_strs = def_str.split()
     embedding_type, params = def_strs[0], def_strs[1:]
     if embedding_type == "word2vec":
         (filename,) = params
-        return Vectors(filename)
+        return Vectors(filename, cache=vector_cache)
     if embedding_type == "fasttext":
         (language,) = params
-        return FastText(language)
+        return FastText(language, cache=vector_cache)
     raise NotImplementedError()
 
 class characters(namedtuple("characters", "chars starts ends")):

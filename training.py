@@ -40,13 +40,13 @@ def main():
 loadconfig = Parameters(
     corpusfilename=(str, None), wordembedding=(str, None),
     split=(str, None), batchsize=(int, 1), shuffle=(bool, False))
-def load_data(config):
+def load_data(config, vector_cache=None):
     # setup corpus
     corpus = SupertagCorpus.read(open(config.corpusfilename, "rb"))
     vocabulary = set(word for sentence in corpus.sent_corpus for word in sentence)
 
     # setup word embeddings
-    embedding = embedding_factory(config.wordembedding)
+    embedding = embedding_factory(config.wordembedding, vector_cache)
     embedding = TruncatedEmbedding(embedding, vocabulary)
 
     data = SupertagDataset(corpus, embedding)
