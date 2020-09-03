@@ -31,6 +31,7 @@ def main():
     train_model(model, tc, train, test, data, torch_device=torch_device, \
         report_loss=report_tensorboard_scalars, start_state=start_state)
 
+    model.eval()
     ec = testparam(**config["Test"])
     data.evaluate(
         predictions(model, val, k=ec.toptags, torch_device=torch_device),
@@ -115,13 +116,11 @@ def train_model(model, config, train_data, test_data, data, torch_device=device(
 
 
 def predictions(model, val_data, k=1, torch_device=device("cpu")):
-    model.eval()
-    with no_grad():
-        for sample in val_data:
-            sample = sample.to(torch_device)
-            for golds, predictions \
-                    in zip(sample.golds(), model.predict(*sample.inp, k)):
-                yield (*golds, *predictions)
+    for sample in val_data:
+        sample = sample.to(torch_device)
+        for golds, predictions \
+                in zip(sample.golds(), model.predict(*sample.inp, k)):
+            yield (*golds, *predictions)
 
 
 def report_tensorboard_scalars(scores, iteration_or_epoch, writer=SummaryWriter()):
