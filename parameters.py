@@ -15,8 +15,11 @@ class Parameters:
         self._param_t = namedtuple(f"Parameters", " ".join(params.keys()))
 
     @classmethod
-    def merge(cls, param1, param2):
-        return cls(**param1._params, **param2._params)
+    def merge(cls, param1, param2, *params):
+        p = { **param1._params, **param2._params }
+        for paramx in params:
+            p = { **p, **paramx._params }
+        return cls(**p)
 
     def default(self):
         defvalues = (v for _, v in self._params.values())

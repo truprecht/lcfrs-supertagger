@@ -62,10 +62,23 @@ def embedding_factory(def_str):
         return FastText(language)
     raise NotImplementedError()
 
-class SupertagDataset(Dataset):
-    trainrecord = namedtuple("trainrecord", "chars starts ends charlens wordembeds pos lens prets tags")
-    testrecord = namedtuple("testrecord", "chars starts ends charlens wordembeds pos lens words trees")
+class characters(namedtuple("characters", "chars starts ends")):
+    def to(self, *args):
+        return characters(*(seq.to(*args) for seq in self))
 
+class record(namedtuple("record", "inp out evl")):
+    def to(self, *args):
+        return record(
+            tuple(seq.to(*args) for seq in self.inp),
+            tuple(seq.to(*args) for seq in self.out),
+            self.evl)
+    def golds(self):
+        sentlens = self.inp[-1]
+        gprets, gtags = self.out
+        for i, (sent, tree) in enumerate(zip(*self.evl)):
+            yield gprets[:sentlens[i],i], gtags[:sentlens[i],i], sent, tree
+
+class SupertagDataset(Dataset):
     def __init__(self, corpus, word_embeddings, tag_distance=1):
         # TODO: sort by length
         self.corpus = corpus
@@ -97,17 +110,18 @@ class SupertagDataset(Dataset):
         assert self._supertag_confusion.shape == (len(self.truncated_to_all), len(self.truncated_to_all))
         return self._supertag_confusion
 
-    def evaluate(self, sequence, paramfilename=None, fallback=0.0):
+    def evaluate(self, sequence, paramfilename=None, fallback=0.0, report=False):
         from discodop.eval import Evaluator, readparam
         from discodop.lexcorpus import to_parse_tree
         from discodop.lexgrammar import SupertagGrammar
         from discodop.tree import ParentedTree
-        from discodop.treebanktransforms import removefanoutmarkers
-        from discodop.treetransforms import unbinarize
+        from discodop.treetransforms import unbinarize, removefanoutmarkers
+        from re import match
 
         grammar = SupertagGrammar(self.corpus, fallback_prob=fallback)
         evaluator = Evaluator(readparam(paramfilename))
-        for i, (sent, gold, pos, preterms, supertags, weights) in enumerate(sequence):
+        ctags, cprets, npredictions = 0, 0, 0
+        for i, (gprets, gtags, sent, gold, pos, preterms, supertags, weights) in enumerate(sequence):
             supertags = self.truncated_to_all.numpy()[supertags]
             cands = grammar.deintegerize_and_parse(sent, pos, preterms, supertags, weights, 1)
             try:
@@ -116,11 +130,19 @@ class SupertagDataset(Dataset):
             except StopIteration:
                 leaves = (f"({p} {i})" for p, i in zip(pos, range(len(sent))))
                 cand = ParentedTree(f"(NOPARSE {' '.join(leaves)})")
-            gold = unbinarize(removefanoutmarkers(gold))
+            gold = unbinarize(removefanoutmarkers(gold.copy(deep=True)))
             cand = unbinarize(removefanoutmarkers(cand))
             evaluator.add(i, gold, list(sent), cand, list(sent))
-        evaluator.breakdowns()
-        print(evaluator.summary())
+
+            ctags += sum(1 for preds, gold in zip(supertags, gtags) if gold.item() in preds)
+            cprets += sum(1 for pred, gold in zip(preterms, gprets) if gold.item() == pred)
+            npredictions += len(sent)
+        if report:
+            evaluator.breakdowns()
+            print(evaluator.summary())
+        evlscores = { k: float_or_zero(v) for k,v in evaluator.acc.scores().items() }
+        npredictions = max(1, npredictions)
+        return { **evlscores, "acc/tags": ctags/npredictions, "acc/preterms": cprets/npredictions }
 
     def truncate_supertags(self, indices):
         """ Only consider those supertags occurring in sentences
@@ -140,31 +162,31 @@ class SupertagDataset(Dataset):
         preterms = tensor(self.corpus.preterm_corpus[key])
         supertags = tensor(self.corpus.supertag_corpus[key])
         tree = self.corpus.tree_corpus[key]
-        return chars, spaces[:-1]+1, spaces[1:]-1, embedded_words, pos, \
-            preterms, self.all_to_truncated[supertags], words, tree
+        return record(
+                (characters(chars, spaces[:-1]+1, spaces[1:]-1), embedded_words, pos),
+                (preterms, self.all_to_truncated[supertags]),
+                (words, tree))
 
     def __len__(self):
         return len(self.corpus.sent_corpus)
 
-    # def collate_training(self, results):
-    #     (_, word_embeddings, _, pos, preterms, tags) = zip(*results)
-    #     lens = tuple(len(sentence) for sentence in word_embeddings)
-    #     tag_probs = tuple( self.supertag_confusion[ts] for ts in tags )
-    #     return tuple(pad_sequence(batch, padding_value=-1) for batch in (word_embeddings, pos, preterms, tag_probs)) + (tensor(lens),)
-
     def collate_common(self, results):
         results = tuple(zip(*results))
-        slens = tensor([len(embeds) for embeds in results[3]])
-        clens = tensor([len(chars) for chars in results[0]])
-        padded_with_0 = (pad_sequence(seq) for seq in results[:5])
-        padded_with_neg1 = (pad_sequence(seq, padding_value=-1) for seq in results[5:7])
-        unpadded = results[7:]
-        return *padded_with_0, *padded_with_neg1, *unpadded, clens, slens
+        clens = tensor([len(inp[0].chars) for inp in results[0]])
+        slens = tensor([len(inp[1]) for inp in results[0]])
+        cs, we, pos = zip(*results[0])
+        chars = characters(*(pad_sequence(seq) for seq in zip(*cs)))
+        we, pos = pad_sequence(we), pad_sequence(pos)
+        preterms, tags = (pad_sequence(seq, padding_value=-1) for seq in zip(*results[1]))
+        words, trees = zip(*results[2])
+        return record(
+            (chars, clens, we, pos, slens),
+            (preterms, tags),
+            (words, trees))
 
-    def collate_test(self, results):
-        chars, starts, ends, wordembeddings, pos, preterms, tags, _, _, clens, slens = self.collate_common(results)
-        return SupertagDataset.trainrecord(chars, starts, ends, clens, wordembeddings, pos, slens, preterms, tags)
-
-    def collate_val(self, results):
-        chars, starts, ends, wordembeddings, pos, _, _, words, trees, clens, slens = self.collate_common(results)
-        return SupertagDataset.testrecord(chars, starts, ends, clens, wordembeddings, pos, slens, words, trees)
+def float_or_zero(s):
+    try:
+        f = float(s)
+        return f if f == f else 0.0
+    except:
+        return 0.0

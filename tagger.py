@@ -18,15 +18,15 @@ class CharLstm(Module):
         self.bilstm = LSTM(input_size=param.embedding_dim, hidden_size=param.hidden_size, \
             bidirectional=True, num_layers=param.layers, dropout=param.dropout if param.layers > 1 else 0)
     
-    def forward(self, x, starts, ends, lens):
+    def forward(self, cs, clens):
         """ input shape: (characters + padding, batch,), (words + padding, batch,)
         """
         output_size = self.bilstm.hidden_size*2
-        y, _ = self.bilstm(pack_padded_sequence(self.charembed(x), lens, enforce_sorted=False))
+        y, _ = self.bilstm(pack_padded_sequence(self.charembed(cs.chars), clens, enforce_sorted=False))
         y, _ = pad_packed_sequence(y)
         return cat((
-            y.gather(0, starts.unsqueeze(-1).expand(starts.shape+(output_size,))),
-            y.gather(0, ends.unsqueeze(-1).expand(ends.shape+(output_size,)))
+            y.gather(0, cs.starts.unsqueeze(-1).expand(cs.starts.shape+(output_size,))),
+            y.gather(0, cs.ends.unsqueeze(-1).expand(cs.ends.shape+(output_size,)))
         ), dim=2)
 
 class tagger(Module):
@@ -69,12 +69,12 @@ class tagger(Module):
         m = tuple(ones((seqlen,), dtype=bool) for seqlen in lens)
         return pad_sequence(m, padding_value=False)
     
-    def forward(self, chars, starts, ends, clens, wordembeddings, postags, slens):
+    def forward(self, cs, clens, wordembeddings, postags, slens):
         """ input shape (words + padding, batch,), (words + padding, batch,), (batch,)
             output shape ((words + padding, batch, supertags), (words + padding, batch, preterms))
         """
         embedding = cat((
-            self.charbilstm(chars, starts, ends, clens),
+            self.charbilstm(cs, clens),
             wordembeddings,
             self.pos(postags + 1)), -1)
         x = pack_padded_sequence(embedding, slens, enforce_sorted=False)
@@ -94,8 +94,8 @@ class tagger(Module):
         (cpt, cst) = (t.log_softmax(dim=1) for t in (cpt, cst))
         return nll_loss(cpt, gpt, ignore_index=-1), nll_loss(cst, gst, ignore_index=-1)
 
-    def predict(self, chars, starts, ends, clens, wordembeddings, postags, slens, k=1):
-        scores = self.forward(chars, starts, ends, clens, wordembeddings, postags, slens)
+    def predict(self, cs, clens, wordembeddings, postags, slens, k=1):
+        scores = self.forward(cs, clens, wordembeddings, postags, slens)
         pt, sts, ws = tagger.n_best_tags(scores, k)
         for idx, sentence_len in enumerate(slens):
             preterminals = pt[0:sentence_len, idx].cpu().numpy()
