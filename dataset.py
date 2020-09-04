@@ -122,6 +122,10 @@ class SupertagDataset(Dataset):
         evaluator = Evaluator(readparam(paramfilename))
         ctags, cprets, npredictions = 0, 0, 0
         for i, (gprets, gtags, sent, gold, pos, preterms, supertags, weights) in enumerate(sequence):
+            ctags += sum(1 for preds, gold in zip(supertags, gtags) if gold.item() in preds)
+            cprets += sum(1 for pred, gold in zip(preterms, gprets) if gold.item() == pred)
+            npredictions += len(sent)
+
             supertags = self.truncated_to_all.numpy()[supertags]
             cands = grammar.deintegerize_and_parse(sent, pos, preterms, supertags, weights, 1)
             try:
@@ -133,16 +137,15 @@ class SupertagDataset(Dataset):
             gold = unbinarize(removefanoutmarkers(gold.copy(deep=True)))
             cand = unbinarize(removefanoutmarkers(cand))
             evaluator.add(i, gold, list(sent), cand, list(sent))
-
-            ctags += sum(1 for preds, gold in zip(supertags, gtags) if gold.item() in preds)
-            cprets += sum(1 for pred, gold in zip(preterms, gprets) if gold.item() == pred)
-            npredictions += len(sent)
         if report:
             evaluator.breakdowns()
             print(evaluator.summary())
         evlscores = { k: float_or_zero(v) for k,v in evaluator.acc.scores().items() }
         npredictions = max(1, npredictions)
-        return { **evlscores, "acc/tags": ctags/npredictions, "acc/preterms": cprets/npredictions }
+        return {
+            **evlscores,
+            "acc/tags": ctags/npredictions,
+            "acc/preterms": cprets/npredictions }
 
     def truncate_supertags(self, indices):
         """ Only consider those supertags occurring in sentences
