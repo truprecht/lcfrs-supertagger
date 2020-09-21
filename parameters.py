@@ -5,6 +5,9 @@ class MissingParameterWarning(Warning):
     pass
 class UnknownParameterWarning(Warning):
     pass
+class MissingRequiredParameter(Exception):
+    def __init__(self, mplist):
+        super(MissingRequiredParameter, self).__init__(f"Missing parameter(s): {', '.join(mp)}.")
 
 class Parameters:
     def __init__(self, **params):
@@ -33,6 +36,11 @@ class Parameters:
                 stacklevel=2)
 
         missing_params = [param for param in self._params if not param in kv]
+        missing_required_params = [mp for mp in missing_params if self._params[mp][1] is None]
+
+        if missing_required_params:
+            raise MissingRequiredParameter(missing_required_params)
+
         if missing_params:
             warn(
                 MissingParameterWarning(f'Using default values for missing parameters: {", ".join(missing_params)}.'),
