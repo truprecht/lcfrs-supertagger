@@ -3,6 +3,8 @@ from torch import cat, zeros, ones, tensor, full
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence
 from collections import namedtuple
 from parameters import Parameters
+from allennlp.modules.conditional_random_field import ConditionalRandomField
+from dataset import characters
 
 class CharLstm(Module):
     hyperparam = Parameters(
@@ -29,25 +31,82 @@ class CharLstm(Module):
             y.gather(0, cs.ends.unsqueeze(-1).expand(cs.ends.shape+(output_size,)))
         ), dim=2)
 
+class CrfTagger(Module):
+    hyperparam = Parameters(
+        word_embedding_dim=(int, None), n_postags=(int, None), n_preterms=(int, None), n_supertags=(int, None),
+        pos_embedding_dim=(int, 10), dropout=(float, 0.1),
+        char_lstm_size=(int, 100), char_lstm_layers=(int, 1), char_embedding_dim=(int, 30),
+        lstm_layers=(int, 1), lstm_size=(int, 100))
+
+    def __init__(self, parameters: hyperparam):
+        super(CrfTagger, self).__init__()
+
+        self.charbilstm = CharLstm(CharLstm.hyperparam(
+            embedding_dim=parameters.char_embedding_dim, hidden_size=parameters.char_lstm_size,
+            layers=parameters.char_lstm_layers, dropout=parameters.dropout))
+        self.pos = Embedding(parameters.n_postags+1, parameters.pos_embedding_dim, padding_idx=0)
+
+        word_embedding_size = self.charbilstm.output_size + parameters.word_embedding_dim + parameters.pos_embedding_dim
+        self.bilstm = LSTM(input_size=word_embedding_size, hidden_size=parameters.lstm_size, \
+            bidirectional=True, num_layers=parameters.lstm_layers, dropout=parameters.dropout if parameters.lstm_layers > 1 else 0)
+        
+        self.ff = Linear(in_features=2*parameters.lstm_size, out_features=parameters.n_preterms+parameters.n_supertags)
+        self.crf = ConditionalRandomField(parameters.n_supertags)
+        self.preterminals = parameters.n_preterms
+        self.supertags = parameters.n_supertags
+    
+    def forward(self, cs: characters, clens, wordembeddings, postags, slens):
+        """ input shape (words + padding, batch,), (words + padding, batch,), (batch,)
+            output shape ((words + padding, batch, supertags), (words + padding, batch, preterms))
+        """
+        embedding = cat((
+            self.charbilstm(cs, clens),
+            wordembeddings,
+            self.pos(postags + 1)), -1)
+        x = pack_padded_sequence(embedding, slens, enforce_sorted=False)
+        x, _ = self.bilstm(x)
+        x, _ = pad_packed_sequence(x)
+        x = self.ff(x)
+        return x.split((self.preterminals, self.supertags), dim=2)
+
+    def loss(self, scores, gold):
+        from torch.nn.functional import cross_entropy
+        (cprets, ctags), (gprets, gtags) = scores, gold
+        gtags, ctags = gtags.transpose(0, 1), ctags.transpose(0, 1)
+        mask = gtags != -1
+        gtags[~mask] = 0
+        return cross_entropy(cprets.flatten(end_dim=1), gprets.flatten(end_dim=1), ignore_index=-1), \
+            -self.crf(ctags, gtags, mask=mask)
+
+    def predict(self, cs: characters, clens, wordembeddings, postags, slens, k: int = 1):
+        (pretscores, tagscores) = self.forward(cs, clens, wordembeddings, postags, slens)
+        crf_input, mask = tagscores.transpose(0, 1), postags.transpose(0, 1) != -1
+        viterbitags = self.crf.viterbi_tags(crf_input, mask=mask, top_k=k)
+        prets = pretscores.argmax(dim=2)
+        for i, (sentence_len, tagseqs) in enumerate(zip(slens, viterbitags)):
+            preterminals = prets[0:sentence_len, i].cpu().numpy()
+            pos = postags[0:sentence_len, i].cpu().numpy()
+            yield pos, preterminals, tagseqs
+
 class tagger(Module):
     hyperparam = Parameters(
+        word_embedding_dim=(int, None), n_postags=(int, None), n_preterms=(int, None), n_supertags=(int, None),
         pos_embedding_dim=(int, 10), dropout=(float, 0.1),
         char_lstm_size=(int, 100), char_lstm_layers=(int, 1), char_embedding_dim=(int, 30),
         lstm_layers=(int, 1), lstm_size=(int, 100),
         mlp_layers=(int, 1), mlp_size=(int, 100))
 
-    def __init__(self, dims, param=None):
+    def __init__(self, param):
         super(tagger, self).__init__()
         if param is None:
             param = self.hyperparam.default()
-        word_embedding_dim, postags, preterms, supertags = dims
 
         self.charbilstm = CharLstm(CharLstm.hyperparam(
             embedding_dim=param.char_embedding_dim, hidden_size=param.char_lstm_size,
             layers=param.char_lstm_layers, dropout=param.dropout))
-        self.pos = Embedding(postags+1, param.pos_embedding_dim, padding_idx=0)
+        self.pos = Embedding(param.n_postags+1, param.pos_embedding_dim, padding_idx=0)
 
-        word_embedding_size = self.charbilstm.output_size + word_embedding_dim + param.pos_embedding_dim
+        word_embedding_size = self.charbilstm.output_size + param.word_embedding_dim + param.pos_embedding_dim
         self.bilstm = LSTM(input_size=word_embedding_size, hidden_size=param.lstm_size, \
             bidirectional=True, num_layers=param.lstm_layers, dropout=param.dropout if param.lstm_layers > 1 else 0)
         
@@ -60,14 +119,10 @@ class tagger(Module):
             next_size = param.mlp_size
 
         ffs.append(Dropout(p=param.dropout))
-        ffs.append(Linear(in_features=next_size, out_features=preterms+supertags))
+        ffs.append(Linear(in_features=next_size, out_features=param.n_preterms+param.n_supertags))
         self.ffs = Sequential(*ffs)
-        self.preterminals = preterms
-        self.supertags = supertags
-
-    def get_mask(self, lens):
-        m = tuple(ones((seqlen,), dtype=bool) for seqlen in lens)
-        return pad_sequence(m, padding_value=False)
+        self.preterminals = param.n_preterms
+        self.supertags = param.n_supertags
     
     def forward(self, cs, clens, wordembeddings, postags, slens):
         """ input shape (words + padding, batch,), (words + padding, batch,), (batch,)
@@ -83,16 +138,10 @@ class tagger(Module):
         x = self.ffs(x)
         return x.split((self.preterminals, self.supertags), dim=2)
 
-    def train_loss(self, scores, gold):
+    def loss(self, scores, gold):
         from torch.nn.functional import cross_entropy
         (cpt, cst, gpt, gst) = (t.flatten(end_dim=1) for t in (*scores, *gold))
         return cross_entropy(cpt, gpt, ignore_index=-1), cross_entropy(cst, gst, ignore_index=-1)
-
-    def test_loss(self, scores, gold):
-        from torch.nn.functional import nll_loss
-        (cpt, cst, gpt, gst) = (t.flatten(end_dim=1) for t in (*scores, *gold))
-        (cpt, cst) = (t.log_softmax(dim=1) for t in (cpt, cst))
-        return nll_loss(cpt, gpt, ignore_index=-1), nll_loss(cst, gst, ignore_index=-1)
 
     def predict(self, cs, clens, wordembeddings, postags, slens, k=1):
         scores = self.forward(cs, clens, wordembeddings, postags, slens)
@@ -118,18 +167,6 @@ class tagger(Module):
         weights = -np.log(weights)
         return (pts, sts, weights)
 
-    @classmethod
-    def index_in_sorted(cls, y, gold_indices):
-        padding = gold_indices == -2
-        not_trained = gold_indices == -1
-        # set padding in gold_indices to 0
-        gold_indices = gold_indices * (~(padding | not_trained))
-        gold_scores = y.gather(2, gold_indices.unsqueeze(2))
-        gold_position = (y > gold_scores).sum(dim=2)
-        gold_position[padding] = -2
-        gold_position[not_trained] = -1
-        return gold_position
-
 def test_charlstm_dims():
     import torch
 
@@ -140,7 +177,28 @@ def test_charlstm_dims():
     starts = pad_sequence([ sp[:-1]+1 for sp in spaces ])
     ends = pad_sequence([ sp[1:]-1 for sp in spaces ])
     lens = tensor([len(s) for s in sentences])
-    assert CharLstm(p).forward(x, starts, ends, lens).shape == (5, 2, p.hidden_size*4)
+    assert CharLstm(p).forward(characters(x, starts, ends), lens).shape == (5, 2, p.hidden_size*4)
+
+def test_crf_dims():
+    import torch
+
+    sentences = ["I am a sentence .".split(), "So am I .".split()]
+    slens = torch.tensor([len(s) for s in sentences])
+    chars = [torch.tensor(list(" ".join(s).encode("utf8"))) for s in sentences]
+    spaces = [cat((torch.tensor([-1]), (s==32).nonzero(as_tuple=False).squeeze(-1), torch.tensor([len(s)]))) for s in chars]
+    clens = torch.tensor([len(s) for s in chars])
+    starts = pad_sequence([ sp[:-1]+1 for sp in spaces ])
+    ends = pad_sequence([ sp[1:]-1 for sp in spaces ])
+    chars = torch.nn.utils.rnn.pad_sequence(chars)
+    cs = characters(chars, starts, ends)
+
+    p = CrfTagger.hyperparam(n_supertags=2, n_preterms=3, n_postags=5, word_embedding_dim=7)
+    word_embeddings = torch.rand((max(slens), 2, p.word_embedding_dim))
+    postags = torch.randint(0, p.n_postags, (max(slens), len(sentences)))
+
+    pretscores, tagscores = CrfTagger(p).forward(cs, clens, word_embeddings, postags, slens)
+    assert tagscores.shape == (max(slens), len(sentences), p.n_supertags)
+    assert pretscores.shape == (max(slens), len(sentences), p.n_preterms)
 
 
 def test_dims():
@@ -158,8 +216,8 @@ def test_dims():
     max_word_len = 10
 
     word_embedding = rand((words, word_dim))
-    t = tagger((word_dim, pos_tags, preterms, supertags),
-            param=tagger.hyperparam(pos_embedding_dim=pos_tags, char_lstm_size=char_dim))
+    t = tagger(param=tagger.hyperparam(
+                word_embedding_dim=word_dim, n_postags=pos_tags, n_preterms=preterms, n_supertags=supertags))
     words = word_embedding[randint(words, (max_seq_size, batch_size))]
     pos = randint(pos_tags, (max_seq_size, batch_size))
     lens = randint(max_seq_size, (batch_size,)) + 1
@@ -182,43 +240,13 @@ def test_dims():
             words[oob, batch] = -1
             pos[oob, batch] = -1
 
-    (pt, st) = t((chars, starts, ends, charlens, words, pos, lens))
-    mask = t.get_mask(lens)
+    (pt, st) = t(characters(chars, starts, ends), charlens, words, pos, lens)
     assert st.shape == (max_seq_size, batch_size, supertags) and pt.shape == (max_seq_size, batch_size, preterms)
-    assert st[mask].shape == (lens.sum(), supertags) and pt[mask].shape == (lens.sum(), preterms)
 
     with no_grad():
         gold_tags = randint(supertags, (max_seq_size, batch_size))
         gold_tags[pos == -1] = -1
-        assert tagger.index_in_sorted(st, gold_tags).shape == (max_seq_size, batch_size)
         (best_pt, n_best_st, n_best_weights) = tagger.n_best_tags((pt, st), 3)
         assert best_pt.shape == (max_seq_size, batch_size) \
             and n_best_st.shape == (max_seq_size, batch_size, 3) \
             and n_best_weights.shape == (max_seq_size, batch_size, 3)
-
-def test_index_in_sorted():
-    from torch import rand, randint
-
-    supertags = 100
-    batch_size = 20
-    max_seq_size = 100
-
-    gold = randint(supertags, (max_seq_size, batch_size))
-    scores = rand((max_seq_size, batch_size, supertags))
-    lens = randint(max_seq_size, (batch_size,)) + 1
-    lens[0] = max_seq_size
-    for batch in range(1, batch_size):
-        for oob in range(lens[batch], max_seq_size):
-            gold[oob, batch] = -1
-
-    positions = tagger.index_in_sorted(scores, gold)
-    for batch in range(1, batch_size):
-        for word in range(0, lens[batch]):
-            p = positions[word, batch]
-            sorted_scores, sorted_indices = scores[word, batch].sort(descending=True)
-            assert scores[word, batch, gold[word, batch]] == sorted_scores[p]
-            assert sorted_indices[p] == gold[word, batch]
-    
-    for batch in range(1, batch_size):
-        for oob in range(lens[batch], max_seq_size):
-            assert positions[oob, batch] == -1

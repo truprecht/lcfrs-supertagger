@@ -121,17 +121,25 @@ class SupertagDataset(Dataset):
         grammar = SupertagGrammar(self.corpus, fallback_prob=fallback)
         evaluator = Evaluator(readparam(paramfilename))
         ctags, cprets, npredictions = 0, 0, 0
-        for i, (gprets, gtags, sent, gold, pos, preterms, supertags, weights) in enumerate(sequence):
-            ctags += sum(1 for preds, gold in zip(supertags, gtags) if gold.item() in preds)
+        for i, (gprets, gtags, sent, gold, pos, preterms, tagseqs) in enumerate(sequence):
+            # ctags += sum(1 for preds, gold in zip(supertags, gtags) if gold.item() in preds)
             cprets += sum(1 for pred, gold in zip(preterms, gprets) if gold.item() == pred)
             npredictions += len(sent)
 
-            supertags = self.truncated_to_all.numpy()[supertags]
-            cands = grammar.deintegerize_and_parse(sent, pos, preterms, supertags, weights, 1)
-            try:
-                cand = next(cands)
-                cand = to_parse_tree(cand)
-            except StopIteration:
+            cand = None
+            # try k-best sequences individually, if fallback is set
+            # it will use only the best sequence
+            for tagseq, w in tagseqs:
+                tags = tensor([[tag] for tag in tagseq])
+                supertags = self.truncated_to_all.numpy()[tags]
+                cands = grammar.deintegerize_and_parse(sent, pos, preterms, supertags, ([0.0] for _ in tagseq), 1)
+                try:
+                    cand = next(cands)
+                    cand = to_parse_tree(cand)
+                    break
+                except StopIteration:
+                    pass
+            if cand is None:
                 leaves = (f"({p} {i})" for p, i in zip(pos, range(len(sent))))
                 cand = ParentedTree(f"(NOPARSE {' '.join(leaves)})")
             gold = unbinarize(removefanoutmarkers(gold.copy(deep=True)))
@@ -144,7 +152,7 @@ class SupertagDataset(Dataset):
         npredictions = max(1, npredictions)
         return {
             **evlscores,
-            "acc/tags": ctags/npredictions,
+            # "acc/tags": ctags/npredictions,
             "acc/preterms": cprets/npredictions }
 
     def truncate_supertags(self, indices):
@@ -179,7 +187,7 @@ class SupertagDataset(Dataset):
         slens = tensor([len(inp[1]) for inp in results[0]])
         cs, we, pos = zip(*results[0])
         chars = characters(*(pad_sequence(seq) for seq in zip(*cs)))
-        we, pos = pad_sequence(we), pad_sequence(pos)
+        we, pos = pad_sequence(we), pad_sequence(pos, padding_value=-1)
         preterms, tags = (pad_sequence(seq, padding_value=-1) for seq in zip(*results[1]))
         words, trees = zip(*results[2])
         return record(

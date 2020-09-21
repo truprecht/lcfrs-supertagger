@@ -9,33 +9,38 @@ from torch.utils.data import DataLoader, Dataset, random_split
 
 from os.path import isfile
 
-from tagger import tagger
+from tagger import CrfTagger
 from dataset import SupertagDataset, embedding_factory, TruncatedEmbedding, split_data
 from parameters import Parameters
+
+DEBUG = False
 
 testparam = Parameters(toptags=(int, 5), evalfilename=(str, None), fallback=(float, 0.0))
 def main():
     config = read_config()
 
     torch_device = device("cuda" if cuda.is_available() else "cpu")
-    tc = trainparam(**config["Training"], **config["Test"])
     print(f"running on device {torch_device}")
+
+    (train, test, val), data = load_data(loadconfig(**config["Data"]))
+
+    (nd, npos, npret, ntag) = data.dims
+    tc = trainparam(**config["Training"], **config["Test"],
+        word_embedding_dim=nd, n_postags=npos, n_preterms=npret, n_supertags=ntag)
     try:
         start_state = load(tc.checkpoint_filename, map_location=torch_device)
     except:
         start_state = None
 
-    (train, test, val), data = load_data(loadconfig(**config["Data"]))
-
-    model = tagger(data.dims, tc).double().to(torch_device)
+    model = CrfTagger(tc).double().to(torch_device)
     train_model(model, tc, train, test, data, torch_device=torch_device, \
-        report_loss=report_tensorboard_scalars, start_state=start_state)
+        report_loss=report_tensorboard_scalars if not DEBUG else print, start_state=start_state)
 
     model.eval()
     ec = testparam(**config["Test"])
     data.evaluate(
         predictions(model, val, k=ec.toptags, torch_device=torch_device),
-        paramfilename=ec.evalfilename, fallback=ec.fallback)
+        paramfilename=ec.evalfilename, fallback=ec.fallback, report=True)
 
 loadconfig = Parameters(
     corpusfilename=(str, None), wordembedding=(str, None),
@@ -67,7 +72,7 @@ trainparam = Parameters(
     epochs=(int, 1), checkpoint_epochs=(int, 0), checkpoint_filename=(str, None),
     lr=(float, 0.01), momentum=(float, 0.9),
     loss_balance=(float, 0.5))
-trainparam = Parameters.merge(trainparam, testparam, tagger.hyperparam)
+trainparam = Parameters.merge(trainparam, testparam, CrfTagger.hyperparam)
 def train_model(model, config, train_data, test_data, data, torch_device=device("cpu"), report_loss=print, start_state=None):
     opt = optim.SGD(model.parameters(), lr=config.lr, momentum=config.momentum)
 
@@ -80,11 +85,12 @@ def train_model(model, config, train_data, test_data, data, torch_device=device(
         iteration = start_state["iteration"]
 
     for epoch in range(start_epoch+1, config.epochs+1):
+        # train epoch
         for sample in train_data:
             iteration += 1
             sample = sample.to(torch_device)
             opt.zero_grad()
-            l1, l2 = model.train_loss(model.forward(*sample.inp), sample.out)
+            l1, l2 = model.loss(model.forward(*sample.inp), sample.out)
             l = (1-config.loss_balance) * l1 + config.loss_balance * l2
             report_loss({ "loss/train/preterminals": l1.item(),
                      "loss/train/supertags": l2.item(),
@@ -93,17 +99,18 @@ def train_model(model, config, train_data, test_data, data, torch_device=device(
             l.backward()
             opt.step()
 
-        with no_grad():
-            if not test_data: continue
-            scores = data.evaluate(
-                predictions(model, test_data, k=config.toptags, torch_device=torch_device),
-                paramfilename=config.evalfilename, fallback=config.fallback)
-            report_loss({
-                    **{ "{}/test/parse".format(name): scores[name] for name in ("lf", "lp", "lr", "ex") },
-                    "acc/test/supertags": scores["acc/tags"],
-                    "acc/test/preterminals": scores["acc/preterms"],
-                }, epoch )
+        # test
+        if not test_data: continue
+        scores = data.evaluate(
+            predictions(model, test_data, k=config.toptags, torch_device=torch_device),
+            paramfilename=config.evalfilename, fallback=config.fallback)
+        report_loss({
+                **{ "{}/test/parse".format(name): scores[name] for name in ("lf", "lp", "lr", "ex") },
+                # "acc/test/supertags": scores["acc/tags"],
+                "acc/test/preterminals": scores["acc/preterms"],
+            }, epoch )
 
+        # save if checkpoint
         if config.checkpoint_epochs and epoch % config.checkpoint_epochs == 0:
             save({
                 "epoch": epoch,
@@ -116,11 +123,12 @@ def train_model(model, config, train_data, test_data, data, torch_device=device(
 
 
 def predictions(model, val_data, k=1, torch_device=device("cpu")):
-    for sample in val_data:
-        sample = sample.to(torch_device)
-        for golds, predictions \
-                in zip(sample.golds(), model.predict(*sample.inp, k)):
-            yield (*golds, *predictions)
+    with no_grad():
+        for sample in val_data:
+            sample = sample.to(torch_device)
+            for golds, predictions \
+                    in zip(sample.golds(), model.predict(*sample.inp, k)):
+                yield (*golds, *predictions)
 
 
 def report_tensorboard_scalars(scores, iteration_or_epoch, writer=SummaryWriter()):
