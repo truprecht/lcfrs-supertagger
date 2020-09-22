@@ -3,7 +3,7 @@ from torch import cat, zeros, ones, tensor, full
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence
 from collections import namedtuple
 from parameters import Parameters
-from allennlp.modules.conditional_random_field import ConditionalRandomField
+from torchcrf import CRF
 from dataset import characters
 
 class CharLstm(Module):
@@ -51,7 +51,7 @@ class CrfTagger(Module):
             bidirectional=True, num_layers=parameters.lstm_layers, dropout=parameters.dropout if parameters.lstm_layers > 1 else 0)
         
         self.ff = Linear(in_features=2*parameters.lstm_size, out_features=parameters.n_preterms+parameters.n_supertags)
-        self.crf = ConditionalRandomField(parameters.n_supertags)
+        self.crf = CRF(parameters.n_supertags)
         self.preterminals = parameters.n_preterms
         self.supertags = parameters.n_supertags
     
@@ -72,7 +72,6 @@ class CrfTagger(Module):
     def loss(self, scores, gold):
         from torch.nn.functional import cross_entropy
         (cprets, ctags), (gprets, gtags) = scores, gold
-        gtags, ctags = gtags.transpose(0, 1), ctags.transpose(0, 1)
         mask = gtags != -1
         gtags[~mask] = 0
         return cross_entropy(cprets.flatten(end_dim=1), gprets.flatten(end_dim=1), ignore_index=-1), \
@@ -80,13 +79,12 @@ class CrfTagger(Module):
 
     def predict(self, cs: characters, clens, wordembeddings, postags, slens, k: int = 1):
         (pretscores, tagscores) = self.forward(cs, clens, wordembeddings, postags, slens)
-        crf_input, mask = tagscores.transpose(0, 1), postags.transpose(0, 1) != -1
-        viterbitags = self.crf.viterbi_tags(crf_input, mask=mask, top_k=k)
+        viterbitags = self.crf.decode(tagscores, mask=(postags!=-1))
         prets = pretscores.argmax(dim=2)
-        for i, (sentence_len, tagseqs) in enumerate(zip(slens, viterbitags)):
+        for i, (sentence_len, tagseq) in enumerate(zip(slens, viterbitags)):
             preterminals = prets[0:sentence_len, i].cpu().numpy()
             pos = postags[0:sentence_len, i].cpu().numpy()
-            yield pos, preterminals, tagseqs
+            yield pos, preterminals, tagseq
 
 class tagger(Module):
     hyperparam = Parameters(

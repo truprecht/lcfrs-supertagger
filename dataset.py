@@ -1,7 +1,7 @@
 # pylint: disable=not-callable
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
-from torch import tensor, zeros, cat, unsqueeze, from_numpy, is_tensor, arange
+from torch import tensor, zeros, cat, unsqueeze, from_numpy, is_tensor, arange, zeros_like
 from torchtext.vocab import Vectors, FastText
 from torch.nn.functional import softmax
 from torch.utils.data import random_split, Subset
@@ -121,25 +121,18 @@ class SupertagDataset(Dataset):
         grammar = SupertagGrammar(self.corpus, fallback_prob=fallback)
         evaluator = Evaluator(readparam(paramfilename))
         ctags, cprets, npredictions = 0, 0, 0
-        for i, (gprets, gtags, sent, gold, pos, preterms, tagseqs) in enumerate(sequence):
+        for i, (gprets, gtags, sent, gold, pos, preterms, tags) in enumerate(sequence):
             # ctags += sum(1 for preds, gold in zip(supertags, gtags) if gold.item() in preds)
             cprets += sum(1 for pred, gold in zip(preterms, gprets) if gold.item() == pred)
             npredictions += len(sent)
 
             cand = None
-            # try k-best sequences individually, if fallback is set
-            # it will use only the best sequence
-            for tagseq, w in tagseqs:
-                tags = tensor([[tag] for tag in tagseq])
-                supertags = self.truncated_to_all.numpy()[tags]
-                cands = grammar.deintegerize_and_parse(sent, pos, preterms, supertags, ([0.0] for _ in tagseq), 1)
-                try:
-                    cand = next(cands)
-                    cand = to_parse_tree(cand)
-                    break
-                except StopIteration:
-                    pass
-            if cand is None:
+            supertags = [[tag] for tag in self.truncated_to_all.numpy()[tensor(tags)]]
+            cands = grammar.deintegerize_and_parse(sent, pos, preterms, supertags, [[0.0] for tag in supertags], 1)
+            try:
+                cand = next(cands)
+                cand = to_parse_tree(cand)
+            except StopIteration:
                 leaves = (f"({p} {i})" for p, i in zip(pos, range(len(sent))))
                 cand = ParentedTree(f"(NOPARSE {' '.join(leaves)})")
             gold = unbinarize(removefanoutmarkers(gold.copy(deep=True)))
