@@ -7,7 +7,7 @@ class UnknownParameterWarning(Warning):
     pass
 class MissingRequiredParameter(Exception):
     def __init__(self, mplist):
-        super(MissingRequiredParameter, self).__init__(f"Missing parameter(s): {', '.join(mp)}.")
+        super(MissingRequiredParameter, self).__init__(f"Missing parameter(s): {', '.join(mplist)}.")
 
 class Parameters:
     def __init__(self, **params):
