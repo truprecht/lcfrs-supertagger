@@ -1,7 +1,7 @@
 from parameters import Parameters
 
 from flair.models import SequenceTagger
-from flair.embeddings import CharacterEmbeddings, StackedEmbeddings, WordEmbeddings, OneHotEmbeddings
+from flair.embeddings import FlairEmbeddings, StackedEmbeddings, WordEmbeddings, OneHotEmbeddings
 from flair.nn import Model
 
 from flair.datasets.sequence_labeling import Corpus
@@ -10,25 +10,24 @@ from flair.data import Dictionary
 from discodop.lexgrammar import SupertagGrammar
 
 hyperparam = Parameters(
-        pos_embedding_dim=(int, 10), dropout=(float, 0.1),
-        char_embedding_dim=(int, 30), wordembedding=(str, "glove"),
+        pos_embedding_dim=(int, 10), dropout=(float, 0.1), lang=(str, None),
         lstm_layers=(int, 1), lstm_size=(int, 100))
 class Supertagger(Model):
     def __init__(self, embeddings, grammar, lstm_size: int, lstm_layers: int, tags: Dictionary, dropout: float):
         super(Supertagger, self).__init__()
         self.supertags = SequenceTagger(
             lstm_size, embeddings, tags, "supertag",
-            rnn_layers=lstm_layers, dropout=dropout
+            rnn_layers=lstm_layers, dropout=dropout, use_crf=False
         )
         self.grammar = grammar
 
     @classmethod
     def from_corpus(cls, corpus: Corpus, grammar: SupertagGrammar, parameters: hyperparam):
         emb = StackedEmbeddings([
-            # CharacterEmbeddings(char_embedding_dim=parameters.char_embedding_dim),
-            WordEmbeddings(parameters.wordembedding),
+            FlairEmbeddings(f"{parameters.lang}-forward"),
+            FlairEmbeddings(f"{parameters.lang}-backward"),
+            WordEmbeddings(parameters.lang),
             OneHotEmbeddings(corpus, field="pos", embedding_length=parameters.pos_embedding_dim)])
-        # avoid unk token in dictionary
         tags = corpus.make_label_dictionary("supertag")
         return cls(emb, grammar, parameters.lstm_size, parameters.lstm_layers,
             tags, parameters.dropout)
@@ -77,7 +76,7 @@ class Supertagger(Model):
                     y_pred.append(predicted_tag)
                 sent = [token.text for token in sentence]
                 pos = [token.get_tag("pos").value for token in sentence]
-                parses = self.grammar.parse(sent, pos, pos, predicted_tags)
+                parses = self.grammar.parse(sent, pos, pos, predicted_tags, posmode=True)
                 try:
                     parse = next(parses)
                     parse = to_parse_tree(parse)

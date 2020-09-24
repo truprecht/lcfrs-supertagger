@@ -30,7 +30,7 @@ def main():
 
     dc = loadconfig(**config["Data"])
     corpus = ParseCorpus(dc.corpusfilename)
-    grammar = SupertagGrammar.fromcorpus(SupertagCorpus.read(open(dc.corpusfilename, "rb")), 1e-4)
+    grammar = SupertagGrammar(SupertagCorpus.read(open(dc.corpusfilename, "rb")), 1e-4)
 
     tc = trainparam(**config["Training"], **config["Test"])
     model = Supertagger.from_corpus(corpus, grammar, tc)
@@ -44,9 +44,8 @@ def main():
         checkpoint=True)
 
 trainparam = Parameters(
-    epochs=(int, 1), checkpoint_epochs=(int, 0), checkpoint_filename=(str, None),
-    lr=(float, 0.01), momentum=(float, 0.9),
-    loss_balance=(float, 0.5))
+    epochs=(int, 1), checkpoint_filename=(str, None),
+    lr=(float, 0.01), momentum=(float, 0.9))
 trainparam = Parameters.merge(trainparam, testparam, hyperparam)
 
 
