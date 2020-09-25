@@ -1,7 +1,6 @@
 from parameters import Parameters
 
 from flair.models import SequenceTagger
-from flair.embeddings import FlairEmbeddings, StackedEmbeddings, WordEmbeddings, OneHotEmbeddings, CharacterEmbeddings
 from flair.nn import Model
 
 from flair.datasets.sequence_labeling import Corpus
@@ -12,9 +11,31 @@ import torch
 from discodop.lexgrammar import SupertagGrammar
 from discodop.eval import Evaluator, readparam
 
+def EmbeddingFactory(parameters, corpus):
+    from flair.embeddings import FlairEmbeddings, StackedEmbeddings, \
+        WordEmbeddings, OneHotEmbeddings, CharacterEmbeddings, TransformerWordEmbeddings
+
+    stack = []
+    for emb in parameters.embedding.split():
+        if emb.startswith("bert"):
+            stack.append(TransformerWordEmbeddings(model=emb))
+        elif emb == "flair":
+            if not parameters.lang:
+                raise Exception("Training.lang must be set to use flair embeddings")
+            stack += [
+                FlairEmbeddings(f"{parameters.lang}-forward", fine_tune=True, with_whitespace=False),
+                FlairEmbeddings(f"{parameters.lang}-backward", fine_tune=True, with_whitespace=False)]
+        elif emb == "pos":
+            if not parameters.pos_embedding_dim:
+                raise Exception("Training.pos_embedding_im must be set to use pos embeddings")
+            stack.append(OneHotEmbeddings(corpus, field="pos", embedding_length=parameters.pos_embedding_dim, min_freq=0))
+        else:
+            stack.append(WordEmbeddings(emb))
+    return StackedEmbeddings(stack)
+
 hyperparam = Parameters(
-        pos_embedding_dim=(int, 10), dropout=(float, 0.1), lang=(str, None),
-        lstm_layers=(int, 1), lstm_size=(int, 100))
+        pos_embedding_dim=(int, 0), dropout=(float, 0.1), lang=(str, ""),
+        lstm_layers=(int, 1), lstm_size=(int, 100), embedding=(str, "pos"))
 evalparam = Parameters(ktags=(int, 5), evalfilename=(str, None), fallbackprob=(float, 0.0))
 class Supertagger(Model):
     def __init__(self, embeddings, grammar, 
@@ -51,13 +72,10 @@ class Supertagger(Model):
 
     @classmethod
     def from_corpus(cls, corpus: Corpus, grammar: SupertagGrammar, parameters: hyperparam):
-        emb = StackedEmbeddings([
-            FlairEmbeddings(f"{parameters.lang}-forward", fine_tune=True, with_whitespace=False),
-            FlairEmbeddings(f"{parameters.lang}-backward", fine_tune=True, with_whitespace=False),
-            WordEmbeddings(parameters.lang),
-            OneHotEmbeddings(corpus, field="pos", embedding_length=parameters.pos_embedding_dim, min_freq=0)])
         tags = corpus.make_label_dictionary("supertag")
-        return cls(emb, grammar,
+        return cls(
+            EmbeddingFactory(parameters, corpus),
+            grammar,
             parameters.lstm_size, parameters.lstm_layers,
             tags, parameters.dropout)
 
@@ -149,7 +167,9 @@ class Supertagger(Model):
             "lstm_layers": self.supertags.rnn_layers,
             "tags": self.supertags.tag_dictionary,
             "dropout": self.supertags.dropout.p,
-            "grammar": self.__grammar__.todict()
+            "grammar": self.__grammar__.todict(),
+            "ktags": self.ktags,
+            "evalparam": self.__evalparam__
         }
 
     @classmethod
@@ -158,6 +178,8 @@ class Supertagger(Model):
             state["embeddings"],
             SupertagGrammar.fromdict(state["grammar"]),
             state["lstm_size"], state["lstm_layers"], state["tags"], state["dropout"])
+        model.__evalparam__ = state["evalparam"]
+        model.ktags = state["ktags"]
         model.load_state_dict(state["state"])
         return model
 
