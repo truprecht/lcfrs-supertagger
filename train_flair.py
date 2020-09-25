@@ -6,8 +6,6 @@ from flair.datasets.sequence_labeling import ColumnCorpus
 from flair.trainers import ModelTrainer
 import numpy as np
 
-DEBUG = True
-
 from torch.utils.data import Dataset
 
 class ParseCorpus(ColumnCorpus):
@@ -30,7 +28,7 @@ def main():
 
     dc = loadconfig(**config["Data"])
     corpus = ParseCorpus(dc.corpusfilename)
-    grammar = SupertagGrammar(SupertagCorpus.read(open(dc.corpusfilename, "rb")), 1e-4)
+    grammar = SupertagGrammar(SupertagCorpus.read(open(dc.corpusfilename, "rb")), 0.0)
 
     tc = trainparam(**config["Training"], **config["Test"])
     model = Supertagger.from_corpus(corpus, grammar, tc)
