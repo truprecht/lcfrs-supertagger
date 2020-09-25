@@ -10,21 +10,28 @@ from flair.data import Dictionary, Label
 import torch
 
 from discodop.lexgrammar import SupertagGrammar
+from discodop.eval import Evaluator, readparam
 
 hyperparam = Parameters(
         pos_embedding_dim=(int, 10), dropout=(float, 0.1), lang=(str, None),
-        lstm_layers=(int, 1), lstm_size=(int, 100), ktags=(int, 1), fallback_prob=(float, 0.0))
+        lstm_layers=(int, 1), lstm_size=(int, 100))
+evalparam = Parameters(ktags=(int, 5), evalfilename=(str, None), fallbackprob=(float, 0.0))
 class Supertagger(Model):
     def __init__(self, embeddings, grammar, 
-                lstm_size: int, lstm_layers: int, tags: Dictionary, dropout: float, ktags: int, fallback_prob: float):
+                lstm_size: int, lstm_layers: int, tags: Dictionary, dropout: float):
         super(Supertagger, self).__init__()
         self.supertags = SequenceTagger(
             lstm_size, embeddings, tags, "supertag",
             rnn_layers=lstm_layers, dropout=dropout, use_crf=False, use_rnn=True
         )
         self.__grammar__ = grammar
-        self.__grammar__.fallback_prob = fallback_prob
-        self.ktags = ktags
+        self.__evalparam__ = None
+        self.ktags = 1
+
+    def set_eval_param(self, config):
+        self.fallback_prob = config.fallbackprob
+        self.evalparam = config.evalfilename
+        self.ktags = config.ktags
 
     @property
     def fallback_prob(self):
@@ -32,7 +39,15 @@ class Supertagger(Model):
 
     @fallback_prob.setter
     def fallback_prob(self, value: float):
-        self.__grammar__.fallback_prob = float
+        self.__grammar__.fallback_prob = value
+
+    @property
+    def evalparam(self):
+        return self.__evalparam__
+
+    @evalparam.setter
+    def evalparam(self, evalfile):
+        self.__evalparam__ = readparam(evalfile)
 
     @classmethod
     def from_corpus(cls, corpus: Corpus, grammar: SupertagGrammar, parameters: hyperparam):
@@ -44,7 +59,7 @@ class Supertagger(Model):
         tags = corpus.make_label_dictionary("supertag")
         return cls(emb, grammar,
             parameters.lstm_size, parameters.lstm_layers,
-            tags, parameters.dropout, parameters.ktags, parameters.fallback_prob)
+            tags, parameters.dropout)
 
     def forward_loss(self, data_points):
         return self.supertags.forward_loss(data_points)
@@ -80,13 +95,16 @@ class Supertagger(Model):
         from discodop.tree import ParentedTree
         from discodop.treetransforms import unbinarize, removefanoutmarkers
         from discodop.eval import Evaluator, readparam
+
+        if self.__evalparam__ is None:
+            raise Exception("Need to specify evaluator parameter file before evaluating")
+        evaluator = Evaluator(self.__evalparam__)
         
         data_loader = DataLoader(sentences, batch_size=mini_batch_size, num_workers=num_workers)
 
         eval_loss = 0
         i = 0
         batches = 0
-        evaluator = Evaluator(readparam("proper.prm"))
         for batch in data_loader:
             # predict for batch
             loss = self.predict(batch,
@@ -141,8 +159,7 @@ class Supertagger(Model):
         model = cls(
             state["embeddings"],
             SupertagGrammar.fromdict(state["grammar"]),
-            state["lstm_size"], state["lstm_layers"], state["tags"], state["dropout"],
-            state["ktags"], state["fallback_prob"])
+            state["lstm_size"], state["lstm_layers"], state["tags"], state["dropout"])
         model.load_state_dict(state["state"])
         return model
 
