@@ -52,8 +52,8 @@ class Supertagger(Model):
     @classmethod
     def from_corpus(cls, corpus: Corpus, grammar: SupertagGrammar, parameters: hyperparam):
         emb = StackedEmbeddings([
-            FlairEmbeddings(f"{parameters.lang}-forward"),
-            FlairEmbeddings(f"{parameters.lang}-backward"),
+            FlairEmbeddings(f"{parameters.lang}-forward", fine_tune=True, with_whitespace=False),
+            FlairEmbeddings(f"{parameters.lang}-backward", fine_tune=True, with_whitespace=False),
             WordEmbeddings(parameters.lang),
             OneHotEmbeddings(corpus, field="pos", embedding_length=parameters.pos_embedding_dim, min_freq=0)])
         tags = corpus.make_label_dictionary("supertag")
@@ -75,7 +75,7 @@ class Supertagger(Model):
         with torch.no_grad():
             scores = self.supertags.forward(batch)
             loss = self.supertags._calculate_loss(scores, batch)
-            probs = (-scores.softmax(dim=2).log()).numpy()
+            probs = (-scores.softmax(dim=2).log()).cpu().numpy()
             tags = argpartition(probs, self.ktags, axis=2)[:, :, 0:self.ktags]
             weights = take_along_axis(probs, tags, 2)
             for sentence, senttags, sentweights in zip(batch, tags, weights):
@@ -149,9 +149,7 @@ class Supertagger(Model):
             "lstm_layers": self.supertags.rnn_layers,
             "tags": self.supertags.tag_dictionary,
             "dropout": self.supertags.dropout.p,
-            "grammar": self.__grammar__.todict(),
-            "ktags": self.ktags,
-            "fallback_prob": self.fallback_prob
+            "grammar": self.__grammar__.todict()
         }
 
     @classmethod
