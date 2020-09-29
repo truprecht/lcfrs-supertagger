@@ -18,7 +18,7 @@ def EmbeddingFactory(parameters, corpus):
     stack = []
     for emb in parameters.embedding.split():
         if emb.startswith("bert"):
-            stack.append(TransformerWordEmbeddings(model=emb))
+            stack.append(TransformerWordEmbeddings(model=emb, fine_tune=True))
         elif emb == "flair":
             if not parameters.lang:
                 raise Exception("Training.lang must be set to use flair embeddings")

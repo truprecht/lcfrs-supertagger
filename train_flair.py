@@ -4,9 +4,8 @@ from discodop.lexgrammar import SupertagCorpus, SupertagGrammar
 from tagger import Supertagger, hyperparam, evalparam
 from flair.datasets.sequence_labeling import ColumnCorpus
 from flair.trainers import ModelTrainer
-import numpy as np
 
-from torch.utils.data import Dataset
+from torch.optim import Adam
 
 class ParseCorpus(ColumnCorpus):
     def __init__(self, basename):
@@ -21,7 +20,7 @@ class ParseCorpus(ColumnCorpus):
 
 trainparam = Parameters(
     epochs=(int, 1), checkpoint_filename=(str, None),
-    lr=(float, 0.01), momentum=(float, 0.9))
+    lr=(float, 0.01))
 trainparam = Parameters.merge(trainparam, evalparam, hyperparam)
 loadconfig = Parameters(
     corpusfilename=(str, None), split=(str, None), batchsize=(int, 1))
@@ -36,13 +35,14 @@ def main():
     model = Supertagger.from_corpus(corpus, grammar, tc)
     model.set_eval_param(tc)
 
-    trainer = ModelTrainer(model, corpus, use_tensorboard=True)
+    trainer = ModelTrainer(model, corpus, optimizer=Adam, use_tensorboard=True)
     trainer.train(
         tc.checkpoint_filename,
         learning_rate=tc.lr,
         mini_batch_size=dc.batchsize,
         max_epochs=tc.epochs,
-        checkpoint=True)
+        checkpoint=True,
+        min_learning_rate=tc.lr*1e-3)
 
 def read_config():
     from sys import argv
