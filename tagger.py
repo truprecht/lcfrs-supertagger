@@ -1,15 +1,17 @@
 from parameters import Parameters
 
-from flair.models import SequenceTagger
-from flair.nn import Model
-
 from flair.datasets.sequence_labeling import Corpus
 from flair.data import Dictionary, Label
+from flair.models import SequenceTagger
+from flair.nn import Model
+from flair.training_utils import Result
 
 import torch
 
 from discodop.lexgrammar import SupertagGrammar
 from discodop.eval import Evaluator, readparam
+
+from typing import Tuple, Union
 
 def EmbeddingFactory(parameters, corpus):
     from flair.embeddings import FlairEmbeddings, StackedEmbeddings, \
@@ -106,9 +108,20 @@ class Supertagger(Model):
             if return_loss:
                 return loss
 
-    def evaluate(self, sentences, mini_batch_size=32, num_workers=1, embedding_storage_mode="none", out_path=None):
+    def evaluate(self, sentences, mini_batch_size=32, num_workers=1,
+            embedding_storage_mode="none", out_path=None,
+            only_disc: Union[None, bool, str] = None) -> Tuple[Result, float]:
+        """ :param sentences: a sentence ``DataSet`` of sentences, where
+            each contains a label `tree` whose label is the gold parse tree, as
+            provided by ``ParseCorpus``.
+            :param disc_only: If set, overrides the setting `DISC_ONLY` in the
+            evaluation parameter file ``self.evalparam``, i.e. only evaluates
+            discontinuous constituents if True. Pass "both" to report both
+            results.
+            :returns: tuple with evaluation ``Result``, where the main score
+            is the f1-score (for all constituents, if only_disc == "both").
+        """
         from flair.datasets import DataLoader
-        from flair.training_utils import Result
         from discodop.lexcorpus import to_parse_tree
         from discodop.tree import ParentedTree
         from discodop.treetransforms import unbinarize, removefanoutmarkers
@@ -116,7 +129,15 @@ class Supertagger(Model):
 
         if self.__evalparam__ is None:
             raise Exception("Need to specify evaluator parameter file before evaluating")
-        evaluator = Evaluator(self.__evalparam__)
+        if only_disc == "both":
+            evaluators = {
+                "all":  Evaluator({ **self.evalparam, "DISC_ONLY": False }),
+                "disc": Evaluator({ **self.evalparam, "DISC_ONLY": True  })}
+        else:
+            mode = self.evalparam["DISC_ONLY"] if only_disc is None else only_disc
+            strmode = "disc" if mode else "all"
+            evaluators = {
+                strmode: Evaluator({ **self.evalparam, "DISC_ONLY": mode })}
         
         data_loader = DataLoader(sentences, batch_size=mini_batch_size, num_workers=num_workers)
 
@@ -149,12 +170,19 @@ class Supertagger(Model):
                 gold = ParentedTree(sentence.get_labels("tree")[0].value)
                 gold = unbinarize(removefanoutmarkers(gold))
                 parse = unbinarize(removefanoutmarkers(parse))
-                evaluator.add(i, gold, list(sent), parse, list(sent))
+                for evaluator in evaluators.values():
+                    evaluator.add(i, gold.copy(deep=True), list(sent), parse.copy(deep=True), list(sent))
                 i += 1
             batches += 1
-        evlscores = { k: float_or_zero(v) for k,v in evaluator.acc.scores().items() }
+        scores = {
+            strmode: float_or_zero(evaluator.acc.scores()['lf'])
+            for strmode, evaluator in evaluators.items()}
         return (
-            Result(evlscores["lf"], "Parsing fscore", f"fscore: {evlscores['lf']}", evaluator.summary()),
+            Result(
+                scores['all'] if 'all' in scores else next(scores.values()),
+                "\t".join(f"fscore ({mode})" for mode in scores),
+                "\t".join(f"{s}" for s in scores.values()),
+                '\n\n'.join(evaluator.summary() for evaluator in evaluators.values())),
             eval_loss / batches
         )
 
@@ -166,7 +194,7 @@ class Supertagger(Model):
             "lstm_size": self.supertags.hidden_size,
             "lstm_layers": self.supertags.rnn_layers,
             "tags": self.supertags.tag_dictionary,
-            "dropout": self.supertags.dropout.p,
+            "dropout": self.supertags.use_dropout,
             "grammar": self.__grammar__.todict(),
             "ktags": self.ktags,
             "evalparam": self.__evalparam__
