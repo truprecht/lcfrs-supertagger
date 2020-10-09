@@ -1,16 +1,17 @@
 from parameters import Parameters
 
-from discodop.lexgrammar import SupertagCorpus, SupertagGrammar
+from discodop.lexgrammar import SupertagGrammar
 from tagger import Supertagger, hyperparam, evalparam
 from flair.datasets.sequence_labeling import ColumnCorpus
 from flair.trainers import ModelTrainer
+from pickle import load
 
 from torch.optim import Adam
 
 class ParseCorpus(ColumnCorpus):
     def __init__(self, basename):
         super(ParseCorpus, self).__init__(
-            "", {0: "text", 1: "pos", 2: "preterm", 3: "supertag"},
+            "", {0: "text", 1: "pos", 2: "supertag"},
             train_file=f"{basename}.train.tags", test_file=f"{basename}.test.tags", dev_file=f"{basename}.dev.tags")
         for s in  ("train", "test", "dev"):
             with open(f"{basename}.{s}.trees") as file:
@@ -29,7 +30,7 @@ def main():
 
     dc = loadconfig(**config["Data"])
     corpus = ParseCorpus(dc.corpusfilename)
-    grammar = SupertagGrammar(SupertagCorpus.read(open(dc.corpusfilename, "rb")), 0.0)
+    grammar = SupertagGrammar(load(open(dc.corpusfilename, "rb")), 0.0)
 
     tc = trainparam(**config["Training"], **config["Test"])
     model = Supertagger.from_corpus(corpus, grammar, tc)

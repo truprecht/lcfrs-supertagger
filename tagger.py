@@ -13,6 +13,8 @@ from discodop.eval import Evaluator, readparam
 
 from typing import Tuple, Union
 
+from math import log
+
 def EmbeddingFactory(parameters, corpus):
     from flair.embeddings import FlairEmbeddings, StackedEmbeddings, \
         WordEmbeddings, OneHotEmbeddings, CharacterEmbeddings, TransformerWordEmbeddings
@@ -29,7 +31,7 @@ def EmbeddingFactory(parameters, corpus):
                 FlairEmbeddings(f"{parameters.lang}-backward", fine_tune=True, with_whitespace=False)]
         elif emb == "pos":
             if not parameters.pos_embedding_dim:
-                raise Exception("Training.pos_embedding_im must be set to use pos embeddings")
+                raise Exception("Training.pos_embedding_dim must be set to use pos embeddings")
             stack.append(OneHotEmbeddings(corpus, field="pos", embedding_length=parameters.pos_embedding_dim, min_freq=0))
         else:
             stack.append(WordEmbeddings(emb))
@@ -45,7 +47,7 @@ class Supertagger(Model):
         super(Supertagger, self).__init__()
         self.supertags = SequenceTagger(
             lstm_size, embeddings, tags, "supertag",
-            rnn_layers=lstm_layers, dropout=dropout, use_crf=False, use_rnn=True
+            rnn_layers=lstm_layers, dropout=dropout, use_crf=False, use_rnn=True, reproject_embeddings=False
         )
         self.__grammar__ = grammar
         self.__evalparam__ = None
@@ -95,14 +97,14 @@ class Supertagger(Model):
         with torch.no_grad():
             scores = self.supertags.forward(batch)
             loss = self.supertags._calculate_loss(scores, batch)
-            probs = (-scores.softmax(dim=2).log()).cpu().numpy()
-            tags = argpartition(probs, self.ktags, axis=2)[:, :, 0:self.ktags]
+            probs = scores.softmax(dim=2).cpu().numpy()
+            tags = argpartition(-probs, self.ktags, axis=2)[:, :, 0:self.ktags]
             weights = take_along_axis(probs, tags, 2)
             for sentence, senttags, sentweights in zip(batch, tags, weights):
                 for token, ktags, kweights, in zip(sentence, senttags, sentweights):
                     str_ktags = tuple(self.supertags.tag_dictionary.get_item_for_index(t) for t in ktags)
                     token.add_tags_proba_dist(label_name, [Label(t, w) for t, w in zip(str_ktags, kweights)])
-                    vtag = kweights.argmin()
+                    vtag = kweights.argmax()
                     token.add_tag_label(label_name, Label(str_ktags[vtag], kweights[vtag]))
             store_embeddings(batch, storage_mode=embedding_storage_mode)
             if return_loss:
@@ -123,7 +125,7 @@ class Supertagger(Model):
         """
         from flair.datasets import DataLoader
         from discodop.lexcorpus import to_parse_tree
-        from discodop.tree import ParentedTree
+        from discodop.tree import ParentedTree, Tree
         from discodop.treetransforms import unbinarize, removefanoutmarkers
         from discodop.eval import Evaluator, readparam
 
@@ -156,11 +158,11 @@ class Supertagger(Model):
                 predicted_tags = []
                 for token in sentence:
                     predicted_tags.append([
-                        (l.value, l.score)
+                        (l.value, -log(l.score))
                         for l in token.get_tags_proba_dist('predicted')])
                 sent = [token.text for token in sentence]
                 pos = [token.get_tag("pos").value for token in sentence]
-                parses = self.__grammar__.parse(sent, pos, pos, predicted_tags, posmode=True)
+                parses = self.__grammar__.parse(sent, pos, predicted_tags, posmode=True)
                 try:
                     parse = next(parses)
                     parse = to_parse_tree(parse)
@@ -168,8 +170,8 @@ class Supertagger(Model):
                     leaves = (f"({p} {i})" for p, i in zip(pos, range(len(sent))))
                     parse = ParentedTree(f"(NOPARSE {' '.join(leaves)})")
                 gold = ParentedTree(sentence.get_labels("tree")[0].value)
-                gold = unbinarize(removefanoutmarkers(gold))
-                parse = unbinarize(removefanoutmarkers(parse))
+                gold = ParentedTree.convert(unbinarize(removefanoutmarkers(Tree.convert(gold))))
+                parse = ParentedTree.convert(unbinarize(removefanoutmarkers(Tree.convert(parse))))
                 for evaluator in evaluators.values():
                     evaluator.add(i, gold.copy(deep=True), list(sent), parse.copy(deep=True), list(sent))
                 i += 1
