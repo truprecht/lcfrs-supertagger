@@ -146,6 +146,8 @@ class Supertagger(Model):
         eval_loss = 0
         i = 0
         batches = 0
+        corr_tags = 0
+        all_tags = 0
         for batch in data_loader:
             # predict for batch
             loss = self.predict(batch,
@@ -160,6 +162,10 @@ class Supertagger(Model):
                     predicted_tags.append([
                         (l.value, -log(l.score))
                         for l in token.get_tags_proba_dist('predicted')])
+                    taglist = [l.value for l in token.get_tags_proba_dist('predicted')]
+                    if token.get_tag("supertag").value in taglist:
+                        corr_tags += 1
+                all_tags += len(sentence)
                 sent = [token.text for token in sentence]
                 pos = [token.get_tag("pos").value for token in sentence]
                 parses = self.__grammar__.parse(sent, pos, predicted_tags, posmode=True)
@@ -179,6 +185,7 @@ class Supertagger(Model):
         scores = {
             strmode: float_or_zero(evaluator.acc.scores()['lf'])
             for strmode, evaluator in evaluators.items()}
+        scores["accuracy"] = corr_tags / all_tags
         return (
             Result(
                 scores['all'] if 'all' in scores else next(scores.values()),
