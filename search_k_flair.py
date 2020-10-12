@@ -25,8 +25,12 @@ for k in argv[3:]:
     print(f"running prediction for k = {k}")
     config["Test"]["ktags"] = k
     model.set_eval_param(evalparam(**config["Test"]))
+    start = default_timer()
     results, _ = model.evaluate(data.dev, mini_batch_size=lc.batchsize, only_disc="both")
+    end = default_timer()
     print(results.log_header)
     print(results.log_line)
     print(results.detailed_results)
+    print()
+    print(f"runtime: {end-start}s")
     print()
