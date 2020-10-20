@@ -1,4 +1,4 @@
-from parameters import Parameters
+from .parameters import Parameters
 
 from flair.datasets.sequence_labeling import Corpus
 from flair.data import Dictionary, Label
@@ -13,7 +13,16 @@ from discodop.eval import Evaluator, readparam
 
 from typing import Tuple, Union
 
-from math import log
+
+def pretrainedstr(model, language):
+    if model != "bert-base":
+        return model
+    # translate two letter language code into bert model
+    return {
+        "de": "bert-base-german-cased",
+        "en": "bert-base-cased",
+        "nl": "wietsedv/bert-base-dutch-cased"
+    }[language]
 
 def EmbeddingFactory(parameters, corpus):
     from flair.embeddings import FlairEmbeddings, StackedEmbeddings, \
@@ -21,26 +30,29 @@ def EmbeddingFactory(parameters, corpus):
 
     stack = []
     for emb in parameters.embedding.split():
-        if emb.startswith("bert"):
-            stack.append(TransformerWordEmbeddings(model=emb, fine_tune=True))
+        if any((spec in emb) for spec in ("bert", "gpt", "xlnet")):
+            stack.append(TransformerWordEmbeddings(
+                model=pretrainedstr(emb, parameters.language),
+                fine_tune=True))
         elif emb == "flair":
-            if not parameters.lang:
-                raise Exception("Training.lang must be set to use flair embeddings")
             stack += [
-                FlairEmbeddings(f"{parameters.lang}-forward", fine_tune=True, with_whitespace=False),
-                FlairEmbeddings(f"{parameters.lang}-backward", fine_tune=True, with_whitespace=False)]
+                FlairEmbeddings(f"{parameters.language}-forward", fine_tune=True, with_whitespace=False),
+                FlairEmbeddings(f"{parameters.language}-backward", fine_tune=True, with_whitespace=False)]
         elif emb == "pos":
-            if not parameters.pos_embedding_dim:
-                raise Exception("Training.pos_embedding_dim must be set to use pos embeddings")
             stack.append(OneHotEmbeddings(corpus, field="pos", embedding_length=parameters.pos_embedding_dim, min_freq=0))
+        elif emb == "word":
+            stack.append(WordEmbeddings(parameters.language))
         else:
-            stack.append(WordEmbeddings(emb))
+            raise NotImplementedError()
     return StackedEmbeddings(stack)
 
 hyperparam = Parameters(
-        pos_embedding_dim=(int, 0), dropout=(float, 0.1), lang=(str, ""),
+        pos_embedding_dim=(int, 10), dropout=(float, 0.1), language=(str, ""),
         lstm_layers=(int, 1), lstm_size=(int, 100), embedding=(str, "pos"))
-evalparam = Parameters(ktags=(int, 5), evalfilename=(str, None), fallbackprob=(float, 0.0))
+evalparam = Parameters(
+    ktags=(int, 5), fallbackprob=(float, 0.0),
+    batchsize=(int, 1),
+    evalfilename=(str, None), only_disc=(str, "both"), accuracy=(str, "all"))
 class Supertagger(Model):
     def __init__(self, embeddings, grammar, 
                 lstm_size: int, lstm_layers: int, tags: Dictionary, dropout: float):
@@ -112,7 +124,7 @@ class Supertagger(Model):
 
     def evaluate(self, sentences, mini_batch_size=32, num_workers=1,
             embedding_storage_mode="none", out_path=None,
-            only_disc: Union[None, bool, str] = None) -> Tuple[Result, float]:
+            only_disc: str = "param", accuracy: str = "first") -> Tuple[Result, float]:
         """ :param sentences: a sentence ``DataSet`` of sentences, where
             each contains a label `tree` whose label is the gold parse tree, as
             provided by ``ParseCorpus``.
@@ -120,6 +132,8 @@ class Supertagger(Model):
             evaluation parameter file ``self.evalparam``, i.e. only evaluates
             discontinuous constituents if True. Pass "both" to report both
             results.
+            :param accuracy: either 'first' or 'all'. Determines if the
+            accuracy is computed from the best, or k-best predicted tags.
             :returns: tuple with evaluation ``Result``, where the main score
             is the f1-score (for all constituents, if only_disc == "both").
         """
@@ -128,6 +142,7 @@ class Supertagger(Model):
         from discodop.tree import ParentedTree, Tree
         from discodop.treetransforms import unbinarize, removefanoutmarkers
         from discodop.eval import Evaluator, readparam
+        from math import log
 
         if self.__evalparam__ is None:
             raise Exception("Need to specify evaluator parameter file before evaluating")
@@ -136,7 +151,7 @@ class Supertagger(Model):
                 "all":  Evaluator({ **self.evalparam, "DISC_ONLY": False }),
                 "disc": Evaluator({ **self.evalparam, "DISC_ONLY": True  })}
         else:
-            mode = self.evalparam["DISC_ONLY"] if only_disc is None else only_disc
+            mode = self.evalparam["DISC_ONLY"] if only_disc == "param" else (only_disc=="true")
             strmode = "disc" if mode else "all"
             evaluators = {
                 strmode: Evaluator({ **self.evalparam, "DISC_ONLY": mode })}
@@ -163,8 +178,10 @@ class Supertagger(Model):
                         (l.value, -log(l.score))
                         for l in token.get_tags_proba_dist('predicted')])
                     taglist = [l.value for l in token.get_tags_proba_dist('predicted')]
-                    if token.get_tag("supertag").value in taglist:
+                    if accuracy == "all" and token.get_tag("supertag").value in taglist:
                         corr_tags += 1
+                    elif accuracy == "first":
+                        corr_tags += int(token.get_tag("supertag").value == token.get_tag('predicted').value)
                 all_tags += len(sentence)
                 sent = [token.text for token in sentence]
                 pos = [token.get_tag("pos").value for token in sentence]
@@ -188,7 +205,7 @@ class Supertagger(Model):
         scores["accuracy"] = corr_tags / all_tags
         return (
             Result(
-                scores['all'] if 'all' in scores else next(scores.values()),
+                scores['all'] if 'all' in scores else scores['disc'],
                 "\t".join(f"fscore ({mode})" for mode in scores),
                 "\t".join(f"{s}" for s in scores.values()),
                 '\n\n'.join(evaluator.summary() for evaluator in evaluators.values())),

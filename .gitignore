@@ -1,7 +1,6 @@
 __pycache__
 .vector_cache
-*.conf
-!example.conf
-data
 runs
-model.pt
+*.corpus
+*.tags
+*.trees
