@@ -189,10 +189,10 @@ class Supertagger(Model):
                     parse = next(parses)
                 except StopIteration:
                     leaves = (f"({p} {i})" for p, i in zip(pos, range(len(sent))))
-                    parse = ParentedTree(f"(NOPARSE {' '.join(leaves)})")
-                gold = ParentedTree(sentence.get_labels("tree")[0].value)
-                gold = ParentedTree.convert(unbinarize(removefanoutmarkers(Tree.convert(gold))))
-                parse = ParentedTree.convert(unbinarize(removefanoutmarkers(Tree.convert(parse))))
+                    parse = Tree(f"(NOPARSE {' '.join(leaves)})")
+                gold = Tree(sentence.get_labels("tree")[0].value)
+                gold = ParentedTree.convert(unbinarize(removefanoutmarkers(gold)))
+                parse = ParentedTree.convert(unbinarize(removefanoutmarkers(parse)))
                 for evaluator in evaluators.values():
                     evaluator.add(i, gold.copy(deep=True), list(sent), parse.copy(deep=True), list(sent))
                 i += 1
