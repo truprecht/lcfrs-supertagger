@@ -138,7 +138,6 @@ class Supertagger(Model):
             is the f1-score (for all constituents, if only_disc == "both").
         """
         from flair.datasets import DataLoader
-        from discodop.lexcorpus import to_parse_tree
         from discodop.tree import ParentedTree, Tree
         from discodop.treetransforms import unbinarize, removefanoutmarkers
         from discodop.eval import Evaluator, readparam
@@ -188,7 +187,6 @@ class Supertagger(Model):
                 parses = self.__grammar__.parse(sent, pos, predicted_tags, posmode=True)
                 try:
                     parse = next(parses)
-                    parse = to_parse_tree(parse)
                 except StopIteration:
                     leaves = (f"({p} {i})" for p, i in zip(pos, range(len(sent))))
                     parse = ParentedTree(f"(NOPARSE {' '.join(leaves)})")
