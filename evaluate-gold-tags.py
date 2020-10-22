@@ -8,7 +8,6 @@ config.read(argv[1])
 
 data = SupertagParseCorpus(config['Corpus']['filename'])
 
-from discodop.lexcorpus import to_parse_tree
 from discodop.tree import ParentedTree, Tree
 from discodop.treetransforms import unbinarize, removefanoutmarkers
 from discodop.eval import Evaluator, readparam
@@ -24,7 +23,6 @@ for sentence in data.test:
     parses = grammar.parse(words, poss, tags, posmode=True)
     try:
         parse = next(parses)
-        parse = to_parse_tree(parse)
     except StopIteration:
         leaves = (f"({p} {i})" for p, i in zip(poss, range(len(words))))
         parse = ParentedTree(f"(NOPARSE {' '.join(leaves)})")

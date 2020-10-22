@@ -31,7 +31,7 @@ for k in args[2:]:
     ep = evalparam(**config["Parsing"])
     model.set_eval_param(ep)
     start = default_timer()
-    results, _ = model.evaluate(data.dev, mini_batch_size=ep.batchsize, only_disc=ep.only_disc, accuracy=ep.accuracy)
+    results, _ = model.evaluate(data.dev, mini_batch_size=ep.batchsize, only_disc=ep.only_disc, accuracy="all")
     end = default_timer()
     print(results.log_header)
     print(results.log_line)

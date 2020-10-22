@@ -19,7 +19,7 @@ for option, v in opts:
     config["Parsing"][option] = v
 
 lc = corpusparam(**config["Corpus"], **config["Grammar"])
-ec = evalparam(**config["Parsing"], batchsize=32)
+ec = evalparam(**config["Parsing"])
 
 model = Supertagger.load(args[1])
 model.set_eval_param(ec)
