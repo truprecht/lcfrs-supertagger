@@ -20,7 +20,7 @@ for sentence in data.test:
     words = tuple(t.text for t in sentence)
     poss = tuple(t.get_tag("pos").value for t in sentence)
     tags = tuple(((t.get_tag("supertag").value, 0.0),) for t in sentence)
-    parses = grammar.parse(words, poss, tags, posmode=True)
+    parses = grammar.parse(poss, tags, posmode=True)
     try:
         parse = next(parses)
     except StopIteration:

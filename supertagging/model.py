@@ -184,7 +184,7 @@ class Supertagger(Model):
                 all_tags += len(sentence)
                 sent = [token.text for token in sentence]
                 pos = [token.get_tag("pos").value for token in sentence]
-                parses = self.__grammar__.parse(sent, pos, predicted_tags, posmode=True)
+                parses = self.__grammar__.parse(pos, predicted_tags, posmode=True)
                 try:
                     parse = next(parses)
                 except StopIteration:
