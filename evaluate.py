@@ -12,19 +12,19 @@ opts, args = gnu_getopt(argv[1:], "", ("batchsize=", "ktags=", "only_disc=", "ac
 
 config = ConfigParser()
 config.read(args[0])
+ecdict = {**config["Eval-common"], **config["Eval-Test"]}
 for option, v in opts:
     if not v: continue
     option = option[2:]
-    config["Parsing"][option] = v
+    ecdict[option] = v
 
 lc = corpusparam(**config["Corpus"], **config["Grammar"])
-ec = evalparam(**config["Parsing"])
+ec = evalparam(**ecdict)
 
 model = Supertagger.load(args[1])
 model.set_eval_param(ec)
 model.eval()
 data = SupertagParseCorpus(lc.filename)
-
 results, _ = model.evaluate(data.test, mini_batch_size=ec.batchsize,
     only_disc=ec.only_disc, accuracy=ec.accuracy)
 print(results.log_header)

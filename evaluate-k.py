@@ -13,10 +13,11 @@ assert len(args) > 2, f"use {argv[0]} <data.conf> <model file> <values for k>+ [
 
 config = ConfigParser()
 config.read(args[0])
+ecdict = {**config["Eval-common"], **config["Eval-Development"]}
 for option, v in opts:
     if not v: continue
     option = option[2:]
-    config["Parsing"][option] = v
+    ecdict[option] = v
 
 lc = corpusparam(**config["Corpus"], **config["Grammar"])
 
@@ -26,10 +27,10 @@ data = SupertagParseCorpus(lc.filename)
 
 for k in args[2:]:
     print(f"running prediction for k = {k}")
-    config["Parsing"]["ktags"] = k
-    ep = evalparam(**config["Parsing"])
+    ecdict["ktags"] = k
+    ep = evalparam(**ecdict)
     model.set_eval_param(ep)
-    results, _ = model.evaluate(data.dev, mini_batch_size=ep.batchsize, only_disc=ep.only_disc, accuracy="all")
+    results, _ = model.evaluate(data.dev, mini_batch_size=ep.batchsize, only_disc=ep.only_disc, accuracy="kbest")
     print(results.log_header)
     print(results.log_line)
     print(results.detailed_results)
