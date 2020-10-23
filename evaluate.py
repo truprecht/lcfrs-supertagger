@@ -4,7 +4,6 @@ from supertagging.model import Supertagger, hyperparam, evalparam
 from configparser import ConfigParser
 from sys import argv
 import logging
-from timeit import default_timer
 logging.getLogger("flair").setLevel(40)
 
 from getopt import gnu_getopt
@@ -26,12 +25,8 @@ model.set_eval_param(ec)
 model.eval()
 data = SupertagParseCorpus(lc.filename)
 
-start = default_timer()
 results, _ = model.evaluate(data.test, mini_batch_size=ec.batchsize,
     only_disc=ec.only_disc, accuracy=ec.accuracy)
-end = default_timer()
 print(results.log_header)
 print(results.log_line)
 print(results.detailed_results)
-print()
-print(f"runtime: {end-start}s")

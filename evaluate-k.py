@@ -1,7 +1,6 @@
 from supertagging.data import SupertagParseCorpus, corpusparam
 from supertagging.model import Supertagger, hyperparam, evalparam
 
-from timeit import default_timer
 
 from configparser import ConfigParser
 from sys import argv
@@ -30,12 +29,8 @@ for k in args[2:]:
     config["Parsing"]["ktags"] = k
     ep = evalparam(**config["Parsing"])
     model.set_eval_param(ep)
-    start = default_timer()
     results, _ = model.evaluate(data.dev, mini_batch_size=ep.batchsize, only_disc=ep.only_disc, accuracy="all")
-    end = default_timer()
     print(results.log_header)
     print(results.log_line)
     print(results.detailed_results)
-    print()
-    print(f"runtime: {end-start}s")
     print()

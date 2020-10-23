@@ -101,26 +101,49 @@ class Supertagger(Model):
     def forward(self, data_points):
         return self.supertags.forward(data_points)
 
-    def predict(self, batch, label_name=None, return_loss=False, embedding_storage_mode="none"):
+    def predict(self, batch, label_name: str = None, return_loss: bool = False, embedding_storage_mode="none"):
+        """ :param label_name: the predicted parse trees are stored in each
+                sentence's `label_name` label, the predicted supertags in
+                `label_name`-tag.
+            TODO: add flag if supertags should be stored in tokens
+            TODO: avoid get_item_for_index, posmode
+        """
         from flair.training_utils import store_embeddings
         from numpy import argpartition, take_along_axis
+        from math import log
+
         if not label_name:
-            label_name = self.supertags.tag_type
+            label_name = "predicted"
+        tag_label_name = f"{label_name}-tag"
+
         with torch.no_grad():
             scores = self.supertags.forward(batch)
-            loss = self.supertags._calculate_loss(scores, batch)
             probs = scores.softmax(dim=2).cpu().numpy()
             tags = argpartition(-probs, self.ktags, axis=2)[:, :, 0:self.ktags]
             weights = take_along_axis(probs, tags, 2)
             for sentence, senttags, sentweights in zip(batch, tags, weights):
+                # store tags in tokens
                 for token, ktags, kweights, in zip(sentence, senttags, sentweights):
                     str_ktags = tuple(self.supertags.tag_dictionary.get_item_for_index(t) for t in ktags)
-                    token.add_tags_proba_dist(label_name, [Label(t, w) for t, w in zip(str_ktags, kweights)])
-                    vtag = kweights.argmax()
-                    token.add_tag_label(label_name, Label(str_ktags[vtag], kweights[vtag]))
+                    token.add_tags_proba_dist(tag_label_name, [Label(t, w) for t, w in zip(str_ktags, kweights)])
+                    best_tag = kweights.argmax()
+                    token.add_tag_label(tag_label_name, Label(str_ktags[best_tag], kweights[best_tag]))
+
+                # parse sentence and store parse tree in sentence
+                predicted_tags = (
+                    ((l.value, -log(l.score)) for l in token.get_tags_proba_dist(tag_label_name))
+                    for token in sentence)
+                pos = [token.get_tag("pos").value for token in sentence]
+                parses = self.__grammar__.parse(pos, predicted_tags, posmode=True, ktags=self.ktags)
+                try:
+                    parse = str(next(parses))
+                except StopIteration:
+                    leaves = (f"({p} {i})" for i, p in enumerate(pos))
+                    parse = f"(NOPARSE {' '.join(leaves)})"
+                sentence.set_label(label_name, parse)
             store_embeddings(batch, storage_mode=embedding_storage_mode)
             if return_loss:
-                return loss
+                return self.supertags._calculate_loss(scores, batch)
 
     def evaluate(self, sentences, mini_batch_size=32, num_workers=1,
             embedding_storage_mode="none", out_path=None,
@@ -136,62 +159,56 @@ class Supertagger(Model):
             accuracy is computed from the best, or k-best predicted tags.
             :returns: tuple with evaluation ``Result``, where the main score
             is the f1-score (for all constituents, if only_disc == "both").
+            TODO: add flag if loss should be reported
         """
         from flair.datasets import DataLoader
         from discodop.tree import ParentedTree, Tree
         from discodop.treetransforms import unbinarize, removefanoutmarkers
         from discodop.eval import Evaluator, readparam
-        from math import log
+        from timeit import default_timer
 
         if self.__evalparam__ is None:
             raise Exception("Need to specify evaluator parameter file before evaluating")
         if only_disc == "both":
             evaluators = {
-                "all":  Evaluator({ **self.evalparam, "DISC_ONLY": False }),
-                "disc": Evaluator({ **self.evalparam, "DISC_ONLY": True  })}
+                "F1-all":  Evaluator({ **self.evalparam, "DISC_ONLY": False }),
+                "F1-disc": Evaluator({ **self.evalparam, "DISC_ONLY": True  })}
         else:
             mode = self.evalparam["DISC_ONLY"] if only_disc == "param" else (only_disc=="true")
-            strmode = "disc" if mode else "all"
+            strmode = "F1-disc" if mode else "F1-all"
             evaluators = {
                 strmode: Evaluator({ **self.evalparam, "DISC_ONLY": mode })}
         
         data_loader = DataLoader(sentences, batch_size=mini_batch_size, num_workers=num_workers)
 
+        # predict supertags and parse trees
         eval_loss = 0
-        i = 0
-        batches = 0
-        corr_tags = 0
-        all_tags = 0
+        start_time = default_timer()
         for batch in data_loader:
-            # predict for batch
             loss = self.predict(batch,
                     embedding_storage_mode=embedding_storage_mode,
                     label_name='predicted',
                     return_loss=True)
             eval_loss += loss
+        end_time = default_timer()
 
+        i = 0
+        batches = 0
+        corr_tags = 0
+        all_tags = 0
+        for batch in data_loader:
             for sentence in batch:
-                predicted_tags = []
                 for token in sentence:
-                    predicted_tags.append([
-                        (l.value, -log(l.score))
-                        for l in token.get_tags_proba_dist('predicted')])
-                    taglist = [l.value for l in token.get_tags_proba_dist('predicted')]
-                    if accuracy == "all" and token.get_tag("supertag").value in taglist:
+                    if accuracy == "all" and token.get_tag("supertag").value in \
+                            (l.value for l in token.get_tags_proba_dist('predicted-tag')):
                         corr_tags += 1
                     elif accuracy == "first":
-                        corr_tags += int(token.get_tag("supertag").value == token.get_tag('predicted').value)
+                        corr_tags += int(token.get_tag("supertag").value == token.get_tag('predicted-tag').value)
                 all_tags += len(sentence)
                 sent = [token.text for token in sentence]
-                pos = [token.get_tag("pos").value for token in sentence]
-                parses = self.__grammar__.parse(pos, predicted_tags, posmode=True)
-                try:
-                    parse = next(parses)
-                except StopIteration:
-                    leaves = (f"({p} {i})" for p, i in zip(pos, range(len(sent))))
-                    parse = Tree(f"(NOPARSE {' '.join(leaves)})")
                 gold = Tree(sentence.get_labels("tree")[0].value)
                 gold = ParentedTree.convert(unbinarize(removefanoutmarkers(gold)))
+                parse = Tree(sentence.get_labels("predicted")[0].value)
                 parse = ParentedTree.convert(unbinarize(removefanoutmarkers(parse)))
                 for evaluator in evaluators.values():
                     evaluator.add(i, gold.copy(deep=True), list(sent), parse.copy(deep=True), list(sent))
@@ -201,10 +218,11 @@ class Supertagger(Model):
             strmode: float_or_zero(evaluator.acc.scores()['lf'])
             for strmode, evaluator in evaluators.items()}
         scores["accuracy"] = corr_tags / all_tags
+        scores["time"] = end_time - start_time
         return (
             Result(
-                scores['all'] if 'all' in scores else scores['disc'],
-                "\t".join(f"fscore ({mode})" for mode in scores),
+                scores['F1-all'] if 'F1-all' in scores else scores['F1-disc'],
+                "\t".join(f"{mode}" for mode in scores),
                 "\t".join(f"{s}" for s in scores.values()),
                 '\n\n'.join(evaluator.summary() for evaluator in evaluators.values())),
             eval_loss / batches
