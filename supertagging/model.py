@@ -64,6 +64,11 @@ class Supertagger(Model):
         self.__grammar__ = grammar
         self.__evalparam__ = None
         self.ktags = 1
+        # sync grammar nonterminals with model indices
+        # TODO: remove this
+        str2tag = { tag.pos(): tag for tag in self.__grammar__.tags }
+        self.__grammar__.tags = tuple(str2tag[pos] for pos in tags.get_items())
+        self.__grammar__.sync_grammar()
 
     def set_eval_param(self, config):
         self.fallback_prob = config.fallbackprob
@@ -88,7 +93,9 @@ class Supertagger(Model):
 
     @classmethod
     def from_corpus(cls, corpus: Corpus, grammar: SupertagGrammar, parameters: hyperparam):
-        tags = corpus.make_label_dictionary("supertag")
+        tags = Dictionary(add_unk=False)
+        for tag in grammar.tags:
+            tags.add_item(tag.pos())
         return cls(
             EmbeddingFactory(parameters, corpus),
             grammar,
@@ -109,11 +116,9 @@ class Supertagger(Model):
                 "both". If "kbest" (or "best"), stores the `self.ktags` best
                 (or the best) predicted tags per token. "both" stores the best
                 as well as the `self.ktags` per token.
-            TODO: avoid get_item_for_index, posmode
         """
         from flair.training_utils import store_embeddings
-        from numpy import argpartition, take_along_axis
-        from math import log
+        from numpy import argpartition, take_along_axis, log
 
         if not label_name:
             label_name = "predicted"
@@ -126,30 +131,21 @@ class Supertagger(Model):
             weights = take_along_axis(probs, tags, 2)
             for sentence, senttags, sentweights in zip(batch, tags, weights):
                 # store tags in tokens
-                # TODO: str_tags is ugly
                 if supertag_storage_mode in ("both", "kbest", "best"):
-                    str_tags = tuple(
-                        tuple(self.supertags.tag_dictionary.get_item_for_index(tagidx) for tagidx in ktags)
-                        for ktags in senttags)
-                    for token, ktags, kweights, in zip(sentence, str_tags, sentweights):
-                        ktags = tuple(ktags)
+                    for token, ktags, kweights, in zip(sentence, senttags, sentweights):
+                        ktags = tuple(self.__grammar__.tags[t].pos() for t in ktags)
                         if supertag_storage_mode in ("both", "kbest"):
                             token.add_tags_proba_dist(tag_label_name, [Label(t, w) for t, w in zip(ktags, kweights)])
                         if supertag_storage_mode in ("both", "best"):
                             best_tag = kweights.argmax()
                             token.add_tag_label(tag_label_name, Label(ktags[best_tag], kweights[best_tag]))
-                else:
-                    str_tags = (
-                        (self.supertags.tag_dictionary.get_item_for_index(tagidx) for tagidx in ktags)
-                        for ktags in senttags)
 
                 # parse sentence and store parse tree in sentence
-                # TODO: -log(weight) via numpy?
-                predicted_tags = tuple(
-                    tuple((tag, -log(weight)) for tag, weight in zip(ktags, kweights))
-                    for ktags, kweights in zip(str_tags, sentweights))
+                predicted_tags = (
+                    zip(ktags, kweights)
+                    for ktags, kweights in zip(senttags, -log(sentweights)))
                 pos = [token.get_tag("pos").value for token in sentence]
-                parses = self.__grammar__.parse(pos, predicted_tags, posmode=True, ktags=self.ktags)
+                parses = self.__grammar__.parse(pos, predicted_tags, ktags=self.ktags)
                 try:
                     parse = str(next(parses))
                 except StopIteration:
