@@ -1,4 +1,4 @@
-from supertagging.data import SupertagParseCorpus, corpusparam
+from supertagging.data import SupertagParseDataset, corpusparam
 from supertagging.model import Supertagger, hyperparam, evalparam
 
 from configparser import ConfigParser
@@ -24,8 +24,8 @@ ec = evalparam(**ecdict)
 model = Supertagger.load(args[1])
 model.set_eval_param(ec)
 model.eval()
-data = SupertagParseCorpus(lc.filename)
-results, _ = model.evaluate(data.test, mini_batch_size=ec.batchsize,
+data = SupertagParseDataset(f"{lc.filename}.test")
+results, _ = model.evaluate(data, mini_batch_size=ec.batchsize,
     only_disc=ec.only_disc, accuracy=ec.accuracy)
 print(results.log_header)
 print(results.log_line)

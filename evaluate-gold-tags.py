@@ -1,12 +1,12 @@
 from sys import argv
 from pickle import load
 from configparser import ConfigParser
-from supertagging.data import SupertagParseCorpus
+from supertagging.data import SupertagParseDataset
 
 config = ConfigParser()
 config.read(argv[1])
 
-data = SupertagParseCorpus(config['Corpus']['filename'])
+data = SupertagParseDataset(f"{config['Corpus']['filename']}.train")
 
 from discodop.tree import ParentedTree, Tree
 from discodop.treetransforms import unbinarize, removefanoutmarkers
@@ -16,7 +16,7 @@ from discodop.lexgrammar import SupertagGrammar
 grammar = SupertagGrammar(load(open(f"{config['Corpus']['filename']}.corpus", "rb")))
 i = 0
 evaluator = Evaluator(readparam("proper.prm"))
-for sentence in data.test:
+for sentence in data:
     words = tuple(t.text for t in sentence)
     poss = tuple(t.get_tag("pos").value for t in sentence)
     tags = tuple(((t.get_tag("supertag").value, 0.0),) for t in sentence)
