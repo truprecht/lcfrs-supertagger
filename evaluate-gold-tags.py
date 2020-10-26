@@ -13,7 +13,7 @@ from discodop.treetransforms import unbinarize, removefanoutmarkers
 from discodop.eval import Evaluator, readparam
 from discodop.lexgrammar import SupertagGrammar
 
-grammar = SupertagGrammar(load(open(f"{config['Corpus']['filename']}.corpus", "rb")))
+grammar = load(open(f"{config['Corpus']['filename']}.grammar", "rb"))
 i = 0
 evaluator = Evaluator(readparam("proper.prm"))
 for sentence in data:

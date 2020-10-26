@@ -13,7 +13,7 @@ def main(config, name):
 
     cp = corpusparam(**config["Corpus"], **config["Grammar"])
     corpus = SupertagParseCorpus(cp.filename)
-    grammar = SupertagGrammar(load(open(f"{cp.filename}.corpus", "rb")), 0.0)
+    grammar = load(open(f"{cp.filename}.grammar", "rb"))
 
     tc = trainparam(**config["Training"], **config["Eval-common"], **config["Eval-Development"], language=cp.language)
     model = Supertagger.from_corpus(corpus, grammar, tc)

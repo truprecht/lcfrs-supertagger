@@ -14,7 +14,7 @@ config = corpusparam(**cp["Corpus"], **cp["Grammar"])
 from discodop.tree import Tree
 from discodop.treebank import READERS
 from discodop.treetransforms import addfanoutmarkers, binarize, collapseunary
-from discodop.lexcorpus import SupertagCorpus
+from discodop.lexgrammar import SupertagCorpus, SupertagGrammar
 
 corpus = READERS[config.inputfmt](config.filename, encoding=config.inputenc, punct="move")
 trees = [
@@ -35,24 +35,24 @@ assert len(portions) in [3,4]
 
 if portions[0] == "debug":
     portions = tuple(int(portion) for portion in portions[1:2]+portions[1:])
-    limits = tuple((name, 0, end) for name, end in zip(names, portions))
+    limits = tuple((name, slice(0, end)) for name, end in zip(names, portions))
 else:
     portions = tuple(int(portion) for portion in portions)
     limits = tuple(reduce(lambda xs, y: xs + (xs[-1]+y,), portions, (0,)))
-    limits = tuple(zip(names, limits[-4:-1], limits[-3:]))
+    limits = tuple((name, slice(start, end)) for (name, start, end) in zip(names, limits[-4:-1], limits[-3:]))
 
 tdtidx = 0
-for (name, start, stop) in limits:
+for (name, indices) in limits:
     tagfile = open(f"{config.filename}.{name}.tags", "w")
     treefile = open(f"{config.filename}.{name}.trees", "w")
-    for sentidx in range(start, stop):
-        for (word, pos, supertag) in zip(
-                corpus.sent_corpus[sentidx],
-                corpus.pos_corpus[sentidx],
-                corpus.supertag_corpus[sentidx]):
-            print(f"{word} {corpus.pos[pos]} {corpus.supertags[supertag].pos()}", file=tagfile)
+    subcorpus = corpus.subcorpus(indices)
+    if name == "train":
+        dump(SupertagGrammar(subcorpus), open(f"{config.filename}.grammar", "wb"))
+    for (sentence, poss, tags, tree) in zip(subcorpus.sent_corpus,
+            subcorpus.pos_corpus, subcorpus.supertag_corpus, subcorpus.tree_corpus):
+        for (word, pos, tag) in zip(sentence, poss, tags):
+            print(f"{word} {subcorpus.pos[pos]} {subcorpus.supertags[tag].pos()}", file=tagfile)
         print(file=tagfile)
-        print(corpus.tree_corpus[sentidx], file=treefile)
+        print(tree, file=treefile)
     treefile.close()
     tagfile.close()
-dump(corpus, open(f"{config.filename}.corpus", "wb"))
