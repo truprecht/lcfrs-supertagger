@@ -68,6 +68,7 @@ class Supertagger(Model):
         # TODO: remove this
         str2tag = { tag.pos(): tag for tag in self.__grammar__.tags }
         self.__grammar__.tags = tuple(str2tag[pos] for pos in tags.get_items())
+        self.__grammar__.roots &= set(tag.lhs for tag in self.__grammar__.tags)
         self.__grammar__.sync_grammar()
 
     def set_eval_param(self, config):
@@ -143,7 +144,7 @@ class Supertagger(Model):
                 # parse sentence and store parse tree in sentence
                 predicted_tags = (
                     zip(ktags, kweights)
-                    for ktags, kweights in zip(senttags, -log(sentweights)))
+                    for ktags, kweights in zip(senttags[:len(sentence)], -log(sentweights[:len(sentence)])))
                 pos = [token.get_tag("pos").value for token in sentence]
                 parses = self.__grammar__.parse(pos, predicted_tags, ktags=self.ktags)
                 try:
