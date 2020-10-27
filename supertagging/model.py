@@ -119,7 +119,7 @@ class Supertagger(Model):
                 as well as the `self.ktags` per token.
         """
         from flair.training_utils import store_embeddings
-        from numpy import argpartition, take_along_axis, log
+        from numpy import argpartition
 
         if not label_name:
             label_name = "predicted"
@@ -127,26 +127,28 @@ class Supertagger(Model):
 
         with torch.no_grad():
             scores = self.supertags.forward(batch)
-            probs = scores.softmax(dim=2).cpu().numpy()
-            tags = argpartition(-probs, self.ktags, axis=2)[:, :, 0:self.ktags]
-            weights = take_along_axis(probs, tags, 2)
-            for sentence, senttags, sentweights in zip(batch, tags, weights):
+            cpuscores = scores.cpu()
+            tags = argpartition(-cpuscores, self.ktags, axis=2)[:, :, 0:self.ktags]
+            neglogprobs = -cpuscores.gather(2, tags).log_softmax(dim=2)
+            for sentence, senttags, sentweights in zip(batch, tags, neglogprobs):
                 # store tags in tokens
                 if supertag_storage_mode in ("both", "kbest", "best"):
                     for token, ktags, kweights, in zip(sentence, senttags, sentweights):
                         ktags = tuple(self.__grammar__.tags[t].pos() for t in ktags)
+                        kweights = (-kweights).exp()
                         if supertag_storage_mode in ("both", "kbest"):
-                            token.add_tags_proba_dist(tag_label_name, [Label(t, w) for t, w in zip(ktags, kweights)])
+                            token.add_tags_proba_dist(tag_label_name, [Label(t, w.item()) for t, w in zip(ktags, kweights)])
                         if supertag_storage_mode in ("both", "best"):
                             best_tag = kweights.argmax()
-                            token.add_tag_label(tag_label_name, Label(ktags[best_tag], kweights[best_tag]))
+                            token.add_tag_label(tag_label_name, Label(ktags[best_tag], kweights[best_tag].item()))
 
                 # parse sentence and store parse tree in sentence
+                sentweights = sentweights[:len(sentence)]
                 predicted_tags = (
                     zip(ktags, kweights)
-                    for ktags, kweights in zip(senttags[:len(sentence)], -log(sentweights[:len(sentence)])))
+                    for ktags, kweights in zip(senttags[:len(sentence)], sentweights))
                 pos = [token.get_tag("pos").value for token in sentence]
-                parses = self.__grammar__.parse(pos, predicted_tags, ktags=self.ktags)
+                parses = self.__grammar__.parse(pos, predicted_tags, ktags=self.ktags, estimates=sentweights.numpy().min(axis=1))
                 try:
                     parse = str(next(parses))
                 except StopIteration:
