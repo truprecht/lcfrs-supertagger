@@ -43,6 +43,6 @@ if __name__ == "__main__":
     filename = ("trained-"
                 f"{basename(argv[1]).replace('.conf', '')}-"
                 f"{basename(argv[2]).replace('.conf', '')}-"
-                f"{datetime.now(): %d-%m-%y-%H:%M}")
+                f"{datetime.now():%d-%m-%y-%H:%M}")
 
     main(conf, filename)
