@@ -39,10 +39,11 @@ class SequenceMultiTagger(flair.nn.Model):
         model.inner = SequenceTagger._init_model_with_state_dict(state["inner"])
         model.type2dict = state["type2dict"]
         model.type2slice = state["type2slice"]
+        model.to(flair.device)
         return model
 
     def _calculate_loss(self, feats_per_type: Iterable[Tuple[str, torch.tensor]], batch: Union[List[Sentence], Sentence]) -> torch.tensor:
-        loss = torch.tensor(0, dtype=float)
+        loss = torch.tensor(0, dtype=float, device=flair.device)
         for tagtype, feats in feats_per_type:
             for sentence_feats, sentence in zip(feats, batch):
                 strtags = [token.get_tag(tagtype).value for token in sentence]
