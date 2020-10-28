@@ -55,30 +55,12 @@ evalparam = Parameters(
     batchsize=(int, 1),
     evalfilename=(str, None), only_disc=(str, "both"), accuracy=(str, "both"))
 class Supertagger(Model):
-    def __init__(
-        self,
-        embeddings,
-        grammar, 
-        lstm_size: int,
-        lstm_layers: int,
-        supertags: Dictionary,
-        postags: Dictionary,
-        dropout: float
-    ):
+    def __init__(self, sequence_tagger, grammar):
         super(Supertagger, self).__init__()
-        self.supertags = SequenceMultiTagger(
-            lstm_size, embeddings, [supertags, postags], ["supertag", "pos"],
-            rnn_layers=lstm_layers, dropout=dropout , reproject_embeddings=False
-        )
+        self.sequence_tagger = sequence_tagger
         self.__grammar__ = grammar
         self.__evalparam__ = None
         self.ktags = 1
-        # sync grammar nonterminals with model indices
-        # TODO: remove this
-        str2tag = { tag.pos(): tag for tag in self.__grammar__.tags }
-        self.__grammar__.tags = tuple(str2tag[pos] for pos in supertags.get_items())
-        self.__grammar__.sync_grammar()
-        # TODO: do we have to do something for postags?
 
     def set_eval_param(self, config):
         self.fallback_prob = config.fallbackprob
@@ -109,17 +91,19 @@ class Supertagger(Model):
         postags = Dictionary(add_unk=False)
         for tag in grammar.pos:
             postags.add_item(tag)
-        return cls(
-            EmbeddingFactory(parameters, corpus),
-            grammar,
-            parameters.lstm_size, parameters.lstm_layers,
-            supertags, postags, parameters.dropout)
+
+        sequence_tagger =  SequenceMultiTagger(
+            parameters.lstm_size, EmbeddingFactory(parameters, corpus), [supertags, postags], ["supertag", "pos"],
+            rnn_layers=parameters.lstm_layers, dropout=parameters.dropout , reproject_embeddings=False
+        )
+
+        return cls(sequence_tagger, grammar)
 
     def forward_loss(self, data_points):
-        return self.supertags.forward_loss(data_points)
+        return self.sequence_tagger.forward_loss(data_points)
 
     def forward(self, data_points):
-        return self.supertags.forward(data_points)
+        return self.sequence_tagger.forward(data_points)
 
     def predict(self, batch, label_name: str = None, return_loss: bool = False, embedding_storage_mode="none", supertag_storage_mode: str = "both", postag_storage_mode = True):
         """ :param label_name: the predicted parse trees are stored in each
@@ -139,32 +123,31 @@ class Supertagger(Model):
         postag_label_name = f"{label_name}-pos"
 
         with torch.no_grad():
-            feat_per_type = dict(self.supertags.forward(batch))
-            pos = feat_per_type["pos"].argmax(dim=2)
-            st_probs = feat_per_type["supertag"].softmax(dim=2).cpu().numpy()
-            sts = argpartition(-st_probs, self.ktags, axis=2)[:, :, 0:self.ktags]
-            st_weights = take_along_axis(st_probs, sts, 2)
-            #for sentence, senttags, sentweights in zip(batch, tags, weights):
-            for sentence, sent_sts, sent_ws, sent_pos in zip(batch, sts, st_weights, pos):
+            scores = dict(self.sequence_tagger.forward(batch))
+            pos = scores["pos"].argmax(dim=2)
+            probs = scores["supertag"].softmax(dim=2).cpu().numpy()
+            tags = argpartition(-probs, self.ktags, axis=2)[:, :, 0:self.ktags]
+            weights = take_along_axis(probs, tags, 2)
+            for sentence, senttags, sentweights, sentpos in zip(batch, tags, weights, pos):
                 # store tags in tokens
                 if supertag_storage_mode in ("both", "kbest", "best"):
-                    for token, ktags, kweights, in zip(sentence, sent_sts, sent_ws):
-                        strktags = tuple(self.supertags.type2dict["supertag"].get_item_for_index(t) for t in ktags)
+                    for token, ktags, kweights, in zip(sentence, senttags, sentweights):
+                        ktags = tuple(self.sequence_tagger.type2dict["supertag"].get_item_for_index(t) for t in ktags)
                         if supertag_storage_mode in ("both", "kbest"):
-                            token.add_tags_proba_dist(supertag_label_name, [Label(t, w) for t, w in zip(strktags, kweights)])
+                            token.add_tags_proba_dist(supertag_label_name, [Label(t, w) for t, w in zip(ktags, kweights)])
                         if supertag_storage_mode in ("both", "best"):
                             best_tag = kweights.argmax()
-                            token.add_tag_label(supertag_label_name, Label(strktags[best_tag], kweights[best_tag]))
+                            token.add_tag_label(supertag_label_name, Label(ktags[best_tag], kweights[best_tag]))
                 if postag_storage_mode:
-                    for token, postag in zip(sentence, sent_pos):
-                        strpos = self.supertags.type2dict["pos"].get_item_for_index(postag)
+                    for token, postag in zip(sentence, sentpos):
+                        strpos = self.sequence_tagger.type2dict["pos"].get_item_for_index(postag)
                         token.add_tag_label(postag_label_name, Label(strpos))
 
                 # parse sentence and store parse tree in sentence
                 predicted_tags = (
                     zip(ktags, kweights)
-                    for ktags, kweights, _ in zip(sent_sts, -log(sent_ws), sentence))
-                predicted_pos = [self.__grammar__.pos[tag] for tag in sent_pos][:len(sentence)]
+                    for ktags, kweights in zip(senttags, -log(sentweights[:len(sentence)])))
+                predicted_pos = [self.__grammar__.pos[tag] for tag in sentpos[:len(sentence)]]
                 parses = self.__grammar__.parse(predicted_pos, predicted_tags, ktags=self.ktags)
                 try:
                     parse = str(next(parses))
@@ -174,7 +157,7 @@ class Supertagger(Model):
                 sentence.set_label(label_name, parse)
             store_embeddings(batch, storage_mode=embedding_storage_mode)
             if return_loss:
-                return self.supertags._calculate_loss(feat_per_type.items(), batch)
+                return self.sequence_tagger._calculate_loss(scores.items(), batch)
 
     def evaluate(self, sentences, mini_batch_size=32, num_workers=1,
             embedding_storage_mode="none", out_path=None,
@@ -271,16 +254,9 @@ class Supertagger(Model):
             eval_loss / batches
         )
 
-
     def _get_state_dict(self):
         return {
-            "state": self.state_dict(),
-            "embeddings": self.supertags.embeddings,
-            "lstm_size": self.supertags.hidden_size,
-            "lstm_layers": self.supertags.rnn_layers,
-            "supertags": self.supertags.type2dict["supertag"],
-            "postags": self.supertags.type2dict["pos"],
-            "dropout": self.supertags.use_dropout,
+            "sequence_tagger": self.sequence_tagger._get_state_dict(),
             "grammar": self.__grammar__.todict(),
             "ktags": self.ktags,
             "evalparam": self.__evalparam__
@@ -288,15 +264,12 @@ class Supertagger(Model):
 
     @classmethod
     def _init_model_with_state_dict(cls, state):
-        model = cls(
-            state["embeddings"],
-            SupertagGrammar.fromdict(state["grammar"]),
-            state["lstm_size"], state["lstm_layers"], state["supertags"], state["postags"], state["dropout"])
+        sequence_tagger = SequenceMultiTagger._init_model_with_state_dict(state["sequence_tagger"])
+        grammar = SupertagGrammar.fromdict(state["grammar"])
+        model = cls(sequence_tagger, grammar)
         model.__evalparam__ = state["evalparam"]
         model.ktags = state["ktags"]
-        model.load_state_dict(state["state"])
         return model
-
 
 def float_or_zero(s):
     try:

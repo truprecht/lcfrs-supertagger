@@ -1,17 +1,9 @@
-from flair.models.sequence_tagger_model import *
-from typing import Iterable, Tuple
+from flair.models.sequence_tagger_model import Dictionary, Sentence, SequenceTagger, torch, flair
+from typing import Iterable, List, Tuple, Union
 
-class SequenceMultiTagger(SequenceTagger):
+class SequenceMultiTagger(flair.nn.Model):
     def __init__(self, hidden_size, embeddings, tag_dictionaries, tag_types, **kwargs):
-        # exclude args that don't make sense anymore
-        # TODO: the first two are just due to the way we instantiate this class
-        assert "hidden_size" not in kwargs
-        assert "embeddings" not in kwargs
-        assert "tag_dictionary" not in kwargs
-        assert "tag_types" not in kwargs
-        assert "loss_weights" not in kwargs
-        assert "use_crf" not in kwargs
-
+        super(SequenceMultiTagger, self).__init__()
         newtags = Dictionary(add_unk=False)
         newtypestr = str(tuple(tag_types))
         self.type2slice = {}
@@ -24,8 +16,7 @@ class SequenceMultiTagger(SequenceTagger):
                 newtag = f"[{tagtype}]-{tagstr}"
                 newtags.add_item(newtag)
 
-        super(SequenceMultiTagger, self).__init__(hidden_size, embeddings, newtags, newtypestr, use_crf=False, **kwargs)
-
+        self.inner = SequenceTagger(hidden_size, embeddings, newtags, newtypestr, **kwargs)
         self.to(flair.device)
 
     def predict(*args, **kwargs):
@@ -35,11 +26,20 @@ class SequenceMultiTagger(SequenceTagger):
         raise NotImplementedError()
     
     def _get_state_dict(self):
-        raise NotImplementedError()
+        return {
+            "inner": self.inner._get_state_dict(),
+            "type2dict": self.type2dict,
+            "type2slice": self.type2slice,
+        }
 
     @classmethod
     def _init_model_with_state_dict(cls, state):
-        raise NotImplementedError()
+        model = cls.__new__(cls)
+        super(SequenceMultiTagger, model).__init__()
+        model.inner = SequenceTagger._init_model_with_state_dict(state["inner"])
+        model.type2dict = state["type2dict"]
+        model.type2slice = state["type2slice"]
+        return model
 
     def _calculate_loss(self, feats_per_type: Iterable[Tuple[str, torch.tensor]], batch: Union[List[Sentence], Sentence]) -> torch.tensor:
         loss = torch.tensor(0, dtype=float)
@@ -52,6 +52,9 @@ class SequenceMultiTagger(SequenceTagger):
         return loss / len(batch)
 
     def forward(self, batch: List[Sentence]) -> Iterable[Tuple[str, torch.tensor]]:
-        feats = super(SequenceMultiTagger, self).forward(batch)
+        feats = self.inner.forward(batch)
         for tagtype, loc in self.type2slice.items():
             yield (tagtype, feats[:, :, loc])
+
+    def forward_loss(self, batch: List[Sentence]) -> torch.tensor:
+        return self._calculate_loss(self.forward(batch), batch)
