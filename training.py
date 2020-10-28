@@ -1,5 +1,5 @@
 from supertagging.data import corpusparam, SupertagParseCorpus
-from supertagging.model import Supertagger, hyperparam, evalparam
+from supertagging.model2 import Supertagger, hyperparam, evalparam
 from supertagging.parameters import Parameters
 
 trainparam = Parameters(
