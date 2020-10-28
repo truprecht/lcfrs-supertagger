@@ -68,7 +68,7 @@ class Supertagger(Model):
         super(Supertagger, self).__init__()
         self.supertags = SequenceMultiTagger(
             lstm_size, embeddings, [supertags, postags], ["supertag", "pos"],
-            rnn_layers=lstm_layers, dropout=dropout, use_crf=False, use_rnn=False, reproject_embeddings=False
+            rnn_layers=lstm_layers, dropout=dropout , reproject_embeddings=False
         )
         self.__grammar__ = grammar
         self.__evalparam__ = None
@@ -139,19 +139,16 @@ class Supertagger(Model):
         postag_label_name = f"{label_name}-postag"
 
         with torch.no_grad():
-            scores = tuple(self.supertags.forward(batch))
-            probs = scores[0].softmax(dim=2).cpu().numpy()
-            supertags = argpartition(-probs, self.ktags, axis=2)[:, :, 0:self.ktags]
-            weights = take_along_axis(probs, supertags, 2)
-            probs = scores[1].softmax(dim=2).cpu().numpy()
-            postags = argpartition(-probs, 1, axis=2)[:, :, 0]
+            feat_per_type = dict(self.supertags.forward(batch))
+            pos = feat_per_type["pos"].argmax(dim=2)
+            st_probs = feat_per_type["supertag"].softmax(dim=2).cpu().numpy()
+            sts = argpartition(-st_probs, self.ktags, axis=2)[:, :, 0:self.ktags]
+            st_weights = take_along_axis(st_probs, sts, 2)
             #for sentence, senttags, sentweights in zip(batch, tags, weights):
-            for sentence, sentsupertags, sentweights, sentpostags in zip(
-                batch, supertags, weights, postags
-            ):
+            for sentence, sent_sts, sent_ws, sent_pos in zip(batch, sts, st_weights, pos):
                 # store tags in tokens
                 if supertag_storage_mode in ("both", "kbest", "best"):
-                    for token, ktags, kweights, in zip(sentence, sentsupertags, sentweights):
+                    for token, ktags, kweights, in zip(sentence, sent_sts, sent_ws):
                         ktags = tuple(self.__grammar__.tags[t].pos() for t in ktags)
                         if supertag_storage_mode in ("both", "kbest"):
                             token.add_tags_proba_dist(supertag_label_name, [Label(t, w) for t, w in zip(ktags, kweights)])
@@ -162,35 +159,18 @@ class Supertagger(Model):
                 # parse sentence and store parse tree in sentence
                 predicted_tags = (
                     zip(ktags, kweights)
-                    for ktags, kweights, _ in zip(sentsupertags, -log(sentweights), sentence)
-                )
-                sentpostags = [self.__grammar__.pos[tag] for tag in sentpostags][:len(sentence)]
-                parses = self.__grammar__.parse(sentpostags, predicted_tags, ktags=self.ktags)
+                    for ktags, kweights, _ in zip(sent_sts, -log(sent_ws), sentence))
+                predicted_pos = [self.__grammar__.pos[tag] for tag in sent_pos][:len(sentence)]
+                parses = self.__grammar__.parse(predicted_pos, predicted_tags, ktags=self.ktags)
                 try:
                     parse = str(next(parses))
                 except StopIteration:
-                    leaves = (f"({p} {i})" for i, p in enumerate(sentpostags))
+                    leaves = (f"({p} {i})" for i, p in enumerate(predicted_pos))
                     parse = f"(NOPARSE {' '.join(leaves)})"
                 sentence.set_label(label_name, parse)
             store_embeddings(batch, storage_mode=embedding_storage_mode)
             if return_loss:
-                # TODO refactor
-                loss = 0
-                for i, (tag_dictionary, tag_type, tagset_size, linear) in enumerate(
-                    zip(
-                        self.supertags.tag_dictionaries,
-                        self.supertags.tag_types,
-                        self.supertags.tagset_sizes,
-                        self.supertags.linear_layers
-                    )
-                ):
-                    self.supertags.tag_dictionary = tag_dictionary
-                    self.supertags.tag_type = tag_type
-                    self.supertags.tagset_size = tagset_size
-                    self.supertags.linear = linear
-                    loss += self.supertags._calculate_loss(scores[i], batch)
-                return loss
-                #return self.supertags._calculate_loss(scores, batch)
+                return self.supertags._calculate_loss(feat_per_type.items(), batch)
 
     def evaluate(self, sentences, mini_batch_size=32, num_workers=1,
             embedding_storage_mode="none", out_path=None,
@@ -288,8 +268,8 @@ class Supertagger(Model):
             "embeddings": self.supertags.embeddings,
             "lstm_size": self.supertags.hidden_size,
             "lstm_layers": self.supertags.rnn_layers,
-            "supertags": self.supertags.tag_dictionaries[0],
-            "postags": self.supertags.tag_dictionaries[1],
+            "supertags": self.supertags.type2dict["supertag"],
+            "postags": self.supertags.type2dict["pos"],
             "dropout": self.supertags.use_dropout,
             "grammar": self.__grammar__.todict(),
             "ktags": self.ktags,
