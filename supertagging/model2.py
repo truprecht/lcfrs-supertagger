@@ -121,7 +121,7 @@ class Supertagger(Model):
     def forward(self, data_points):
         return self.supertags.forward(data_points)
 
-    def predict(self, batch, label_name: str = None, return_loss: bool = False, embedding_storage_mode="none", supertag_storage_mode: str = "both"):
+    def predict(self, batch, label_name: str = None, return_loss: bool = False, embedding_storage_mode="none", supertag_storage_mode: str = "both", postag_storage_mode = True):
         """ :param label_name: the predicted parse trees are stored in each
                 sentence's `label_name` label, the predicted supertags in
                 `label_name`-tag.
@@ -136,7 +136,7 @@ class Supertagger(Model):
         if not label_name:
             label_name = "predicted"
         supertag_label_name = f"{label_name}-supertag"
-        postag_label_name = f"{label_name}-postag"
+        postag_label_name = f"{label_name}-pos"
 
         with torch.no_grad():
             feat_per_type = dict(self.supertags.forward(batch))
@@ -149,12 +149,16 @@ class Supertagger(Model):
                 # store tags in tokens
                 if supertag_storage_mode in ("both", "kbest", "best"):
                     for token, ktags, kweights, in zip(sentence, sent_sts, sent_ws):
-                        ktags = tuple(self.__grammar__.tags[t].pos() for t in ktags)
+                        strktags = tuple(self.supertags.type2dict["supertag"].get_item_for_index(t) for t in ktags)
                         if supertag_storage_mode in ("both", "kbest"):
-                            token.add_tags_proba_dist(supertag_label_name, [Label(t, w) for t, w in zip(ktags, kweights)])
+                            token.add_tags_proba_dist(supertag_label_name, [Label(t, w) for t, w in zip(strktags, kweights)])
                         if supertag_storage_mode in ("both", "best"):
                             best_tag = kweights.argmax()
-                            token.add_tag_label(supertag_label_name, Label(ktags[best_tag], kweights[best_tag]))
+                            token.add_tag_label(supertag_label_name, Label(strktags[best_tag], kweights[best_tag]))
+                if postag_storage_mode:
+                    for token, postag in zip(sentence, sent_pos):
+                        strpos = self.supertags.type2dict["pos"].get_item_for_index(postag)
+                        token.add_tag_label(postag_label_name, Label(strpos))
 
                 # parse sentence and store parse tree in sentence
                 predicted_tags = (
@@ -174,7 +178,7 @@ class Supertagger(Model):
 
     def evaluate(self, sentences, mini_batch_size=32, num_workers=1,
             embedding_storage_mode="none", out_path=None,
-            only_disc: str = "both", accuracy: str = "both") -> Tuple[Result, float]:
+            only_disc: str = "both", accuracy: str = "both", pos_accuracy: bool = True) -> Tuple[Result, float]:
         """ :param sentences: a sentence ``DataSet`` of sentences, where
             each contains a label `tree` whose label is the gold parse tree, as
             provided by ``ParseCorpus``.
@@ -185,6 +189,7 @@ class Supertagger(Model):
             :param accuracy: either 'none', 'best', 'kbest' or 'both'.
             Determines if the accuracy is computed from the best, or k-best
             predicted tags.
+            :param pos_accuracy: if set, reports acc. of predicted pos tags.
             :returns: tuple with evaluation ``Result``, where the main score
             is the f1-score (for all constituents, if only_disc == "both").
             TODO: add flag if loss should be reported
@@ -217,6 +222,7 @@ class Supertagger(Model):
             loss = self.predict(batch,
                     embedding_storage_mode=embedding_storage_mode,
                     supertag_storage_mode=accuracy,
+                    postag_storage_mode=pos_accuracy,
                     label_name='predicted',
                     return_loss=True)
             eval_loss += loss
@@ -229,11 +235,13 @@ class Supertagger(Model):
             for sentence in batch:
                 for token in sentence:
                     if accuracy in ("kbest", "both") and token.get_tag("supertag").value in \
-                            (l.value for l in token.get_tags_proba_dist('predicted-tag')):
+                            (l.value for l in token.get_tags_proba_dist('predicted-supertag')):
                         acc_ctr["kbest"] += 1
                     if accuracy in ("best", "both") and token.get_tag("supertag").value == \
-                            token.get_tag('predicted-tag').value:
+                            token.get_tag('predicted-supertag').value:
                         acc_ctr["best"] += 1
+                    if pos_accuracy and token.get_tag("pos").value == token.get_tag("predicted-pos").value:
+                        acc_ctr["pos"] += 1
                 acc_ctr["all"] += len(sentence)
                 sent = [token.text for token in sentence]
                 gold = Tree(sentence.get_labels("tree")[0].value)
@@ -251,6 +259,8 @@ class Supertagger(Model):
             scores["accuracy-kbest"] = acc_ctr["kbest"] / acc_ctr["all"]
         if accuracy in ("both", "best"):
             scores["accuracy-best"] = acc_ctr["best"] / acc_ctr["all"]
+        if pos_accuracy:
+            scores["accuracy-pos"] = acc_ctr["pos"] / acc_ctr["all"]
         scores["time"] = end_time - start_time
         return (
             Result(
