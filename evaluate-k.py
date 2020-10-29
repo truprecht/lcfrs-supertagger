@@ -30,7 +30,7 @@ for k in args[2:]:
     ecdict["ktags"] = k
     ep = evalparam(**ecdict)
     model.set_eval_param(ep)
-    results, _ = model.evaluate(data, mini_batch_size=ep.batchsize, only_disc=ep.only_disc, accuracy="kbest")
+    results, _ = model.evaluate(data, mini_batch_size=ep.batchsize, only_disc=ep.only_disc, accuracy="kbest", return_loss=False)
     print(results.log_header)
     print(results.log_line)
     print(results.detailed_results)

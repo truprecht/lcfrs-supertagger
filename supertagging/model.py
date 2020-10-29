@@ -164,7 +164,8 @@ class Supertagger(Model):
 
     def evaluate(self, sentences, mini_batch_size=32, num_workers=1,
             embedding_storage_mode="none", out_path=None,
-            only_disc: str = "both", accuracy: str = "both", pos_accuracy: bool = True) -> Tuple[Result, float]:
+            only_disc: str = "both", accuracy: str = "both",
+            pos_accuracy: bool = True, return_loss: bool = True) -> Tuple[Result, float]:
         """ :param sentences: a sentence ``DataSet`` of sentences, where
             each contains a label `tree` whose label is the gold parse tree, as
             provided by ``ParseCorpus``.
@@ -176,9 +177,10 @@ class Supertagger(Model):
             Determines if the accuracy is computed from the best, or k-best
             predicted tags.
             :param pos_accuracy: if set, reports acc. of predicted pos tags.
+            :param return_loss: if set, nll loss wrt. gold tags is reported,
+            otherwise the second component in the returned tuple is 0.
             :returns: tuple with evaluation ``Result``, where the main score
             is the f1-score (for all constituents, if only_disc == "both").
-            TODO: add flag if loss should be reported
         """
         from flair.datasets import DataLoader
         from discodop.tree import ParentedTree, Tree
@@ -210,8 +212,8 @@ class Supertagger(Model):
                     supertag_storage_mode=accuracy,
                     postag_storage_mode=pos_accuracy,
                     label_name='predicted',
-                    return_loss=True)
-            eval_loss += loss
+                    return_loss=return_loss)
+            eval_loss += loss if return_loss else 0
         end_time = default_timer()
 
         i = 0

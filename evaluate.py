@@ -26,7 +26,7 @@ model.set_eval_param(ec)
 model.eval()
 data = SupertagParseDataset(f"{lc.filename}.test")
 results, _ = model.evaluate(data, mini_batch_size=ec.batchsize,
-    only_disc=ec.only_disc, accuracy=ec.accuracy)
+    only_disc=ec.only_disc, accuracy=ec.accuracy, return_loss=False)
 print(results.log_header)
 print(results.log_line)
 print(results.detailed_results)
