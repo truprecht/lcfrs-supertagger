@@ -5,11 +5,14 @@ from supertagging.parameters import Parameters
 trainparam = Parameters(
     epochs=(int, 1), lr=(float, 0.01), batchsize=(int, 1))
 trainparam = Parameters.merge(trainparam, evalparam, hyperparam)
-def main(config, name):
+def main(config, name, random_seed):
     from flair.trainers import ModelTrainer
     from torch.optim import Adam
+    from torch import manual_seed
     from pickle import load
     from discodop.lexgrammar import SupertagGrammar
+
+    manual_seed(random_seed)
 
     cp = corpusparam(**config["Corpus"], **config["Grammar"])
     corpus = SupertagParseCorpus(cp.filename)
@@ -34,8 +37,9 @@ if __name__ == "__main__":
     from os.path import basename
     from datetime import datetime
 
-    assert len(argv) == 3, f"use {argv[0]} <data.conf> <model.conf>"
-    
+    assert len(argv) in (3, 4), f"use {argv[0]} <data.conf> <model.conf> [random seed]"
+    random_seed = int(argv[3]) if len(argv) == 4 else 0
+
     conf = ConfigParser()
     conf.read(argv[1])
     conf.read(argv[2])
@@ -43,6 +47,7 @@ if __name__ == "__main__":
     filename = ("trained-"
                 f"{basename(argv[1]).replace('.conf', '')}-"
                 f"{basename(argv[2]).replace('.conf', '')}-"
+                f"{random_seed}-"
                 f"{datetime.now():%d-%m-%y-%H:%M}")
 
-    main(conf, filename)
+    main(conf, filename, random_seed)
