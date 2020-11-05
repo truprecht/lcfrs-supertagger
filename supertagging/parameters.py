@@ -46,6 +46,11 @@ class Parameters:
                 MissingParameterWarning(f'Using default values for missing parameters: {", ".join(missing_params)}.'),
                 stacklevel=2)
 
-        values = ((vtype(kv[param]) if param in kv else defval) \
+        def parse(strval, t):
+            if t is bool:
+                return strval in ("True", "true", "yes", "1", "y")
+            return t(strval)
+
+        values = ((parse(kv[param], vtype) if param in kv else defval) \
                     for param, (vtype, defval) in self._params.items())
         return self._param_t(*values)

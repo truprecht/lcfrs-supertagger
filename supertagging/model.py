@@ -34,11 +34,11 @@ def EmbeddingFactory(parameters, corpus):
         if any((spec in emb) for spec in ("bert", "gpt", "xlnet")):
             stack.append(TransformerWordEmbeddings(
                 model=pretrainedstr(emb, parameters.language),
-                fine_tune=True))
+                fine_tune=parameters.tune_embedding))
         elif emb == "flair":
             stack += [
-                FlairEmbeddings(f"{parameters.language}-forward", fine_tune=True, with_whitespace=False),
-                FlairEmbeddings(f"{parameters.language}-backward", fine_tune=True, with_whitespace=False)]
+                FlairEmbeddings(f"{parameters.language}-forward", fine_tune=parameters.tune_embedding),
+                FlairEmbeddings(f"{parameters.language}-backward", fine_tune=parameters.tune_embedding)]
         elif emb == "pos":
             stack.append(OneHotEmbeddings(corpus, field="pos", embedding_length=parameters.pos_embedding_dim, min_freq=0))
         elif emb == "word":
@@ -49,7 +49,7 @@ def EmbeddingFactory(parameters, corpus):
 
 hyperparam = Parameters(
         pos_embedding_dim=(int, 10), dropout=(float, 0.1), language=(str, ""),
-        lstm_layers=(int, 1), lstm_size=(int, 100), embedding=(str, "pos"))
+        lstm_layers=(int, 1), lstm_size=(int, 100), embedding=(str, "pos"), tune_embedding=(bool, False))
 evalparam = Parameters(
     ktags=(int, 5), fallbackprob=(float, 0.0),
     batchsize=(int, 1),
