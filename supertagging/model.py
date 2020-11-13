@@ -25,6 +25,10 @@ def pretrainedstr(model, language):
         "nl": "wietsedv/bert-base-dutch-cased"
     }[language]
 
+
+EmbeddingParameters = Parameters(
+    embedding=(str, "word char"), tune_embedding=(bool, False), language=(str, ""),
+    pos_embedding_dim=(int, 20), word_embedding_dim=(int, 300), char_embedding_dim=(int, 64), char_bilstm_dim=(int, 100))
 def EmbeddingFactory(parameters, corpus):
     from flair.embeddings import FlairEmbeddings, StackedEmbeddings, \
         WordEmbeddings, OneHotEmbeddings, CharacterEmbeddings, TransformerWordEmbeddings
@@ -41,50 +45,46 @@ def EmbeddingFactory(parameters, corpus):
                 FlairEmbeddings(f"{parameters.language}-backward", fine_tune=parameters.tune_embedding)]
         elif emb == "pos":
             stack.append(OneHotEmbeddings(corpus, field="pos", embedding_length=parameters.pos_embedding_dim, min_freq=0))
-        elif emb == "word":
+        elif emb == "fasttext":
             stack.append(WordEmbeddings(parameters.language))
+        elif emb == "word":
+            stack.append(OneHotEmbeddings(corpus, field="text", embedding_length=parameters.word_embedding_dim, min_freq=3))
+        elif emb == "char":
+            stack.append(CharacterEmbeddings(char_embedding_dim=parameters.char_embedding_dim, hidden_size_char=parameters.char_bilstm_dim))
         else:
             raise NotImplementedError()
     return StackedEmbeddings(stack)
 
-hyperparam = Parameters(
-        pos_embedding_dim=(int, 10), dropout=(float, 0.1), language=(str, ""),
-        lstm_layers=(int, 1), lstm_size=(int, 100), embedding=(str, "pos"), tune_embedding=(bool, False))
-evalparam = Parameters(
-    ktags=(int, 5), fallbackprob=(float, 0.0),
-    batchsize=(int, 1),
-    evalfilename=(str, None), only_disc=(str, "both"), accuracy=(str, "both"))
+ModelParameters = Parameters.merge(
+        Parameters(dropout=(float, 0.1), lstm_layers=(int, 1), lstm_size=(int, 100)),
+        EmbeddingParameters)
+EvalParameters = Parameters(
+        ktags=(int, 5), fallbackprob=(float, 0.0),
+        batchsize=(int, 1),
+        evalfilename=(str, None), only_disc=(str, "both"), accuracy=(str, "both"), pos_accuracy=(bool, True))
 class Supertagger(Model):
     def __init__(self, sequence_tagger, grammar):
         super(Supertagger, self).__init__()
         self.sequence_tagger = sequence_tagger
         self.__grammar__ = grammar
         self.__evalparam__ = None
-        self.ktags = 1
+        self.__ktags__ = 1
 
-    def set_eval_param(self, config):
-        self.fallback_prob = config.fallbackprob
-        self.evalparam = config.evalfilename
-        self.ktags = config.ktags
-
-    @property
-    def fallback_prob(self):
-        return self.__grammar__.fallback_prob
-
-    @fallback_prob.setter
-    def fallback_prob(self, value: float):
-        self.__grammar__.fallback_prob = value
+    def set_eval_param(self, config: EvalParameters):
+        self.__grammar__.fallback_prob = config.fallbackprob
+        self.__evalparam__ = readparam(config.evalfilename)
+        self.__ktags__ = config.ktags
 
     @property
     def evalparam(self):
         return self.__evalparam__
 
-    @evalparam.setter
-    def evalparam(self, evalfile):
-        self.__evalparam__ = readparam(evalfile)
+    @property
+    def ktags(self):
+        return self.__ktags__
 
     @classmethod
-    def from_corpus(cls, corpus: Corpus, grammar: SupertagGrammar, parameters: hyperparam):
+    def from_corpus(cls, corpus: Corpus, grammar: SupertagGrammar, parameters: ModelParameters):
         supertags = Dictionary(add_unk=False)
         for tag in grammar.tags:
             supertags.add_item(tag.pos())
@@ -264,7 +264,7 @@ class Supertagger(Model):
             "sequence_tagger": self.sequence_tagger._get_state_dict(),
             "grammar": self.__grammar__.todict(),
             "ktags": self.ktags,
-            "evalparam": self.__evalparam__
+            "evalparam": self.evalparam
         }
 
     @classmethod
@@ -272,8 +272,8 @@ class Supertagger(Model):
         sequence_tagger = SequenceMultiTagger._init_model_with_state_dict(state["sequence_tagger"])
         grammar = SupertagGrammar.fromdict(state["grammar"])
         model = cls(sequence_tagger, grammar)
+        model.__ktags__ = state["ktags"]
         model.__evalparam__ = state["evalparam"]
-        model.ktags = state["ktags"]
         return model
 
 def float_or_zero(s):

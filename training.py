@@ -1,10 +1,10 @@
 from supertagging.data import corpusparam, SupertagParseCorpus
-from supertagging.model import Supertagger, hyperparam, evalparam
+from supertagging.model import Supertagger, ModelParameters, EvalParameters
 from supertagging.parameters import Parameters
 
-trainparam = Parameters(
-    epochs=(int, 1), lr=(float, 0.01), batchsize=(int, 1))
-trainparam = Parameters.merge(trainparam, evalparam, hyperparam)
+TrainingParameters = Parameters.merge(
+        Parameters(epochs=(int, 1), lr=(float, 0.01), batchsize=(int, 1)),
+        ModelParameters, EvalParameters)
 def main(config, name, random_seed):
     from flair.trainers import ModelTrainer
     from torch.optim import Adam
@@ -18,7 +18,7 @@ def main(config, name, random_seed):
     corpus = SupertagParseCorpus(cp.filename)
     grammar = load(open(f"{cp.filename}.grammar", "rb"))
 
-    tc = trainparam(**config["Training"], **config["Eval-common"], **config["Eval-Development"], language=cp.language)
+    tc = TrainingParameters(**config["Training"], **config["Eval-common"], **config["Eval-Development"], language=cp.language)
     model = Supertagger.from_corpus(corpus, grammar, tc)
     model.set_eval_param(tc)
 
