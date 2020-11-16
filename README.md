@@ -2,9 +2,9 @@
 
 First, build our fork of disco-dop using
 
-    git submodule update
+    git submodule init && git submodule update  # skip this command, if you did not clone the project, but downloaded a zip-file
     cd disco-dop
-    git submodule update
+    git submodule init && git submodule update  # skip this command, if you did not clone the project, but downloaded a zip-file
     pip install --user -r requirements.txt
     make install
     cd ..
