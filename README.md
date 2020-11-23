@@ -39,3 +39,10 @@ Calling
 
 should word out-of-the-box, as it uses a small (publicly available) sample of the alpino corpus distributed with disco-dop.
 Comments on the configuration files can be found in ```example.conf``` and ```example-model.conf```.
+
+## Tiger corpus
+
+This treebank needs a speacial treatment, because some nodes in the treebank are linked to multiple parents.
+The issue is solved by removing overfluous links (cf. https://github.com/mcoavoux/multilingual_disco_data/blob/master/generate_tiger_data.sh):
+
+    sed -e "3097937d;3097954d;3097986d;3376993d;3376994d;3377000d;3377001d;3377002d;3377008d;3377048d;3377055d" tiger.xml > tiger-fixed.xml
