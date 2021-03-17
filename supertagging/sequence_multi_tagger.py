@@ -1,8 +1,11 @@
-from flair.models.sequence_tagger_model import Dictionary, Sentence, SequenceTagger, torch, flair
+from flair.models.sequence_tagger_model import Dictionary, Sentence, SequenceTagger, TokenEmbeddings, torch, flair
 from typing import Iterable, List, Tuple, Union
 
 class SequenceMultiTagger(flair.nn.Model):
-    def __init__(self, hidden_size, embeddings, tag_dictionaries, tag_types, **kwargs):
+    """ A sequence tagger model for multiple tag types per token as flair.models.sequence_tagger_model.MultiTagger,
+        but this one uses the same architecture for all tags.
+    """
+    def __init__(self, hidden_size: int, embeddings: TokenEmbeddings, tag_dictionaries: Iterable[Dictionary], tag_types: Iterable[str], **kwargs):
         super(SequenceMultiTagger, self).__init__()
         newtags = Dictionary(add_unk=False)
         newtypestr = str(tuple(tag_types))
@@ -16,6 +19,8 @@ class SequenceMultiTagger(flair.nn.Model):
                 newtag = f"[{tagtype}]-{tagstr}"
                 newtags.add_item(newtag)
 
+        for unsupported_param in ("use_crf", "beta", "loss_weights"):
+            assert not unsupported_param in kwargs, f"{unsupported_param} is not supported by SequenceMultiTagger"
         self.inner = SequenceTagger(hidden_size, embeddings, newtags, newtypestr, **kwargs)
         self.to(flair.device)
 
@@ -42,7 +47,9 @@ class SequenceMultiTagger(flair.nn.Model):
         model.to(flair.device)
         return model
 
-    def _calculate_loss(self, feats_per_type: Iterable[Tuple[str, torch.tensor]], batch: Union[List[Sentence], Sentence]) -> torch.tensor:
+    def _calculate_loss(self,
+            feats_per_type: Iterable[Tuple[str, torch.tensor]],
+            batch: Union[List[Sentence], Sentence]) -> torch.tensor:
         loss = torch.tensor(0, dtype=float, device=flair.device)
         for tagtype, feats in feats_per_type:
             for sentence_feats, sentence in zip(feats, batch):

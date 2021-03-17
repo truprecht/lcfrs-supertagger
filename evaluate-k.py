@@ -1,3 +1,7 @@
+""" Reads the development set of a corpus and parses the sentences with
+    different amounts of predicted supertags (`k`).
+"""
+
 from supertagging.data import SupertagParseDataset, corpusparam
 from supertagging.model import Supertagger, EvalParameters
 

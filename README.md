@@ -1,17 +1,15 @@
 # Build
 
-First, build our fork of disco-dop using
+The project was developed and tested using python 3.8.
+We strongly recommend using a conda (or virtualenv) environment when running it:
 
-    git submodule init && git submodule update  # skip this command, if you did not clone the project, but downloaded a zip-file
-    cd disco-dop
-    git submodule init && git submodule update  # skip this command, if you did not clone the project, but downloaded a zip-file
-    pip install --user -r requirements.txt
-    make install
-    cd ..
+    conda create -n lcfrs-supertagger python=3.8 && conda activate lcfrs-supertagger
+    # or virtualenv: virtualenv venv && ./venv/bin/activate
 
-After that, install the remaining requirements for the supertagger
+Build and install all dependencies, including our fork of disco-dop:
 
-    pip install --user -r requirements.txt
+    git submodule update --init --recursive
+    pip install cython `cat requirements.txt` && pip install ./disco-dop/
 
 # Usage
 
@@ -28,7 +26,7 @@ The script writes files to the folder specified in the ```filename``` field of c
     python training.py <data.conf> <model.conf>
 
 trains a sequence tagger as specified in ```<model.conf>``` using the prepared data.
-Existing configurations are ```bilstm-model.conf```, ```bert-model.conf``` and ```supervised-model```.
+Existing configurations are ```bilstm-model.conf```, ```bert-model.conf``` and ```supervised-model.conf```.
 During training, the script writes checkpoints to a newly created folder named after ```<data.conf>```, ```<model.conf>``` and the current date.
 Training is monitored using tensorboard, also there are lists of losses and scores in ```loss.tsv```.
 
@@ -37,7 +35,7 @@ Calling
     python prepare-data.py example.conf
     python training.py example.conf example-model.conf
 
-should word out-of-the-box, as it uses a small (publicly available) sample of the alpino corpus distributed with disco-dop.
+should work out-of-the-box, as it uses a small (publicly available) sample of the alpino corpus distributed with disco-dop.
 Comments on the configuration files can be found in ```example.conf``` and ```example-model.conf```.
 
 ## Tiger corpus

@@ -1,3 +1,7 @@
+""" Reads the test set of a corpus, parses the sentences and reports the scores
+    as specified in the data configuration.
+"""
+
 from supertagging.data import SupertagParseDataset, corpusparam
 from supertagging.model import Supertagger, EvalParameters
 

@@ -63,7 +63,7 @@ EvalParameters = Parameters(
         batchsize=(int, 1),
         evalfilename=(str, None), only_disc=(str, "both"), accuracy=(str, "both"), pos_accuracy=(bool, True))
 class Supertagger(Model):
-    def __init__(self, sequence_tagger, grammar):
+    def __init__(self, sequence_tagger: SequenceMultiTagger, grammar: SupertagGrammar):
         super(Supertagger, self).__init__()
         self.sequence_tagger = sequence_tagger
         self.__grammar__ = grammar
@@ -85,6 +85,10 @@ class Supertagger(Model):
 
     @classmethod
     def from_corpus(cls, corpus: Corpus, grammar: SupertagGrammar, parameters: ModelParameters):
+        """ Construct an instance of the model using
+            * supertags and pos tags from `grammar`, and
+            * word embeddings (as specified in `parameters`) from `corpus`.
+        """
         supertags = Dictionary(add_unk=False)
         for tag in grammar.tags:
             supertags.add_item(tag.pos())
@@ -106,14 +110,29 @@ class Supertagger(Model):
     def forward(self, data_points):
         return self.sequence_tagger.forward(data_points)
 
-    def predict(self, batch, label_name: str = None, return_loss: bool = False, embedding_storage_mode="none", supertag_storage_mode: str = "both", postag_storage_mode = True):
-        """ :param label_name: the predicted parse trees are stored in each
-                sentence's `label_name` label, the predicted supertags in
-                `label_name`-tag.
+    def predict(self, batch: list[flair.Sentence],
+            label_name: str = None,
+            return_loss: bool = False,
+            embedding_storage_mode: str = "none",
+            supertag_storage_mode: str = "both",
+            postag_storage_mode: bool = True):
+        """ Predicts pos tags and supertags for the given sentences and parses
+            them.
+            :param label_name: the predicted parse trees are stored in each
+                sentence's `label_name` label, the predicted supertags are
+                stored in `label_name`-tag of each single token.
+            :param return_loss: if true, computes and returns the loss. Gold
+                supertags and pos-tags are expected in the `supertag` and `pos`
+                labels for each token.
+            :param embedding_storage_mode: one of "none", "cpu", "store".
+                "none" discards embedding predictions after each batch, "cpu"
+                sends the tensors to cpu memory.
             :param supertag_storage_mode: one of "none", "kbest", "best" or
                 "both". If "kbest" (or "best"), stores the `self.ktags` best
                 (or the best) predicted tags per token. "both" stores the best
                 as well as the `self.ktags` per token.
+            :param supertag_storage_mode: if set to false, this will not store
+                predicted pos tags in each token of the given sentences.
         """
         from flair.training_utils import store_embeddings
         from numpy import argpartition
@@ -162,25 +181,33 @@ class Supertagger(Model):
             if return_loss:
                 return self.sequence_tagger._calculate_loss(scores.items(), batch)
 
-    def evaluate(self, sentences, mini_batch_size=32, num_workers=1,
-            embedding_storage_mode="none", out_path=None,
-            only_disc: str = "both", accuracy: str = "both",
-            pos_accuracy: bool = True, return_loss: bool = True) -> Tuple[Result, float]:
-        """ :param sentences: a sentence ``DataSet`` of sentences, where
-            each contains a label `tree` whose label is the gold parse tree, as
-            provided by ``ParseCorpus``.
-            :param disc_only: If set, overrides the setting `DISC_ONLY` in the
-            evaluation parameter file ``self.evalparam``, i.e. only evaluates
-            discontinuous constituents if True. Pass "both" to report both
-            results.
+    def evaluate(self,
+            sentences: SupertagParseDataset,
+            mini_batch_size: int = 32,
+            num_workers: int = 1,
+            embedding_storage_mode: str = "none",
+            out_path = None,
+            only_disc: str = "both",
+            accuracy: str = "both",
+            pos_accuracy: bool = True,
+            return_loss: bool = True) -> Tuple[Result, float]:
+        """ Predicts supertags, pos tags and parse trees, and reports the
+            predictions scores for a set of sentences.
+            :param sentences: a ``DataSet`` of sentences. For each sentence
+                a gold parse tree is expected as value of the `tree` label, as
+                provided by ``SupertagParseDataset``.
+            :param only_disc: If set, overrides the setting `DISC_ONLY` in the
+                evaluation parameter file ``self.evalparam``, i.e. only evaluates
+                discontinuous constituents if True. Pass "both" to report both
+                results.
             :param accuracy: either 'none', 'best', 'kbest' or 'both'.
-            Determines if the accuracy is computed from the best, or k-best
-            predicted tags.
+                Determines if the accuracy is computed from the best, or k-best
+                predicted tags.
             :param pos_accuracy: if set, reports acc. of predicted pos tags.
             :param return_loss: if set, nll loss wrt. gold tags is reported,
-            otherwise the second component in the returned tuple is 0.
+                otherwise the second component in the returned tuple is 0.
             :returns: tuple with evaluation ``Result``, where the main score
-            is the f1-score (for all constituents, if only_disc == "both").
+                is the f1-score (for all constituents, if only_disc == "both").
         """
         from flair.datasets import DataLoader
         from discodop.tree import ParentedTree, Tree
@@ -218,6 +245,7 @@ class Supertagger(Model):
 
         i = 0
         batches = 0
+        noparses = 0
         acc_ctr = Counter()
         for batch in data_loader:
             for sentence in batch:
@@ -236,6 +264,8 @@ class Supertagger(Model):
                 gold = ParentedTree.convert(unbinarize(removefanoutmarkers(gold)))
                 parse = Tree(sentence.get_labels("predicted")[0].value)
                 parse = ParentedTree.convert(unbinarize(removefanoutmarkers(parse)))
+                if parse.label == "NOPARSE":
+                    noparses += 1
                 for evaluator in evaluators.values():
                     evaluator.add(i, gold.copy(deep=True), list(sent), parse.copy(deep=True), list(sent))
                 i += 1
@@ -249,6 +279,7 @@ class Supertagger(Model):
             scores["accuracy-best"] = acc_ctr["best"] / acc_ctr["all"]
         if pos_accuracy:
             scores["accuracy-pos"] = acc_ctr["pos"] / acc_ctr["all"]
+        scores["coverage"] = 1-(noparses/i)
         scores["time"] = end_time - start_time
         return (
             Result(
@@ -279,6 +310,6 @@ class Supertagger(Model):
 def float_or_zero(s):
     try:
         f = float(s)
-        return f if f == f else 0.0
+        return f if f == f else 0.0 # return 0 if f is NaN
     except:
         return 0.0

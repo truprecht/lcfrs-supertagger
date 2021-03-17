@@ -1,3 +1,9 @@
+""" Reads the traing set of a corpus and parses the sentences with supertags
+    that are extracted from the gold parse trees. This should yield results
+    close to 100% f-score and is solely used to estimate the impact of
+    ambiguous parses with supertags.
+"""
+
 from sys import argv
 from pickle import load
 from configparser import ConfigParser

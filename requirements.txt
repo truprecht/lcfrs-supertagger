@@ -1,2 +1,1 @@
-flair == 0.6.0.post1
-# discodop
+flair==0.6.0.post1
