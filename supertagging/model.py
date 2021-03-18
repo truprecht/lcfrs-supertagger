@@ -1,9 +1,7 @@
-from .parameters import Parameters
+from typing import Tuple, Union, List
 
 from flair.datasets.sequence_labeling import Corpus
-from flair.data import Dictionary, Label
-#from flair.models import SequenceTagger
-from .sequence_multi_tagger import SequenceMultiTagger
+from flair.data import Dictionary, Label, Sentence
 from flair.nn import Model
 from flair.training_utils import Result
 
@@ -12,7 +10,9 @@ import torch
 from discodop.lexgrammar import SupertagGrammar
 from discodop.eval import Evaluator, readparam
 
-from typing import Tuple, Union
+from .data import SupertagParseDataset
+from .parameters import Parameters
+from .sequence_multi_tagger import SequenceMultiTagger
 
 
 def pretrainedstr(model, language):
@@ -110,7 +110,7 @@ class Supertagger(Model):
     def forward(self, data_points):
         return self.sequence_tagger.forward(data_points)
 
-    def predict(self, batch: list[flair.Sentence],
+    def predict(self, batch: List[Sentence],
             label_name: str = None,
             return_loss: bool = False,
             embedding_storage_mode: str = "none",
