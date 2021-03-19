@@ -10,7 +10,7 @@ from supertagging.parameters import Parameters
 FindlrParameters = Parameters.merge(
         Parameters(batchsize=(int, 1)),
         ModelParameters, EvalParameters)
-def main(config, name, min, max, its: int = None):
+def main(config, name, args):
     from flair.trainers import ModelTrainer
     from flair.visual.training_curves import Plotter
     from math import ceil
@@ -21,18 +21,24 @@ def main(config, name, min, max, its: int = None):
 
     cp = corpusparam(**config["Corpus"], **config["Grammar"])
     corpus = SupertagParseCorpus(cp.filename)
+    if args.downsample:
+        corpus = corpus.downsample(args.downsample)
     grammar = load(open(f"{cp.filename}.grammar", "rb"))
 
     tc = FindlrParameters(**config["Training"], **config["Eval-common"], **config["Eval-Development"], language=cp.language)
     model = Supertagger.from_corpus(corpus, grammar, tc)
     model.set_eval_param(tc)
 
-    if its is None:
+    if args.iterations is None:
         epoch = ceil(len(corpus.train)/tc.batchsize)
-        its = epoch * 5
+        args.iterations = epoch * 5
 
     trainer = ModelTrainer(model, corpus)
-    learning_rate_tsv = trainer.find_learning_rate(name, start_learning_rate=min, end_learning_rate=max, iterations=its)
+    learning_rate_tsv = trainer.find_learning_rate(
+        name,
+        start_learning_rate=args.min_lr,
+        end_learning_rate=args.max_lr,
+        iterations=args.iterations)
     plotter = Plotter()
     plotter.plot_learning_rate(learning_rate_tsv)
 
@@ -44,20 +50,20 @@ if __name__ == "__main__":
     from datetime import datetime
 
     args = ArgumentParser()
-    args.add_argument("data", type=str)
-    args.add_argument("model", type=str)
+    args.add_argument("configs", type=str, nargs="+")
     args.add_argument("--min_lr", type=float, default=1e-7)
     args.add_argument("--max_lr", type=float, default=1e-2)
     args.add_argument("--iterations", type=int)
+    args.add_argument("--downsample", type=float)
     args = args.parse_args()
 
     conf = ConfigParser()
-    conf.read(args.data)
-    conf.read(args.model)
+    for config in args.configs:
+        conf.read(config)
 
+    conffilenames = (basename(f) for f in args.configs)
     filename = ("trained-"
-                f"{basename(args.data).replace('.conf', '')}-"
-                f"{basename(args.model).replace('.conf', '')}-"
+                f"{'-'.join(conffilenames)}-"
                 f"{datetime.now():%d-%m-%y-%H:%M}")
 
-    main(conf, filename, args.min_lr, args.max_lr, args.iterations)
+    main(conf, filename, args)

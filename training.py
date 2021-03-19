@@ -3,11 +3,11 @@ from supertagging.model import Supertagger, ModelParameters, EvalParameters
 from supertagging.parameters import Parameters
 
 TrainingParameters = Parameters.merge(
-        Parameters(epochs=(int, 1), lr=(float, 0.01), batchsize=(int, 1)),
+        Parameters(epochs=(int, 1), lr=(float, 0.01), batchsize=(int, 1), weight_decay=(float, 0.01)),
         ModelParameters, EvalParameters)
 def main(config, name, random_seed):
     from flair.trainers import ModelTrainer
-    from torch.optim import Adam
+    from torch.optim import AdamW
     from torch import manual_seed
     from pickle import load
     from discodop.lexgrammar import SupertagGrammar
@@ -22,14 +22,15 @@ def main(config, name, random_seed):
     model = Supertagger.from_corpus(corpus, grammar, tc)
     model.set_eval_param(tc)
 
-    trainer = ModelTrainer(model, corpus, optimizer=Adam, use_tensorboard=True)
+    trainer = ModelTrainer(model, corpus, optimizer=AdamW, use_tensorboard=True)
     trainer.train(
         name,
         learning_rate=tc.lr,
         mini_batch_size=tc.batchsize,
         max_epochs=tc.epochs,
         checkpoint=True,
-        min_learning_rate=tc.lr*1e-3)
+        min_learning_rate=tc.lr/4,
+        weight_decay=tc.weight_decay)
 
 if __name__ == "__main__":
     from sys import argv
