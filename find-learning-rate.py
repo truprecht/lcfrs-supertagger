@@ -21,13 +21,13 @@ def main(config, name, args):
 
     cp = corpusparam(**config["Corpus"], **config["Grammar"])
     corpus = SupertagParseCorpus(cp.filename)
-    if args.downsample:
-        corpus = corpus.downsample(args.downsample)
     grammar = load(open(f"{cp.filename}.grammar", "rb"))
-
     tc = FindlrParameters(**config["Training"], **config["Eval-common"], **config["Eval-Development"], language=cp.language)
     model = Supertagger.from_corpus(corpus, grammar, tc)
     model.set_eval_param(tc)
+
+    if args.downsample:
+        corpus = corpus.downsample(args.downsample)
 
     if args.iterations is None:
         epoch = ceil(len(corpus.train)/tc.batchsize)
