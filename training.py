@@ -1,3 +1,6 @@
+import flair
+import torch
+
 from supertagging.data import corpusparam, SupertagParseCorpus
 from supertagging.model import Supertagger, ModelParameters, EvalParameters
 from supertagging.parameters import Parameters
@@ -33,21 +36,28 @@ def main(config, name, random_seed):
         weight_decay=tc.weight_decay)
 
 if __name__ == "__main__":
-    from sys import argv
+    from argparse import ArgumentParser
     from configparser import ConfigParser
     from os.path import basename
     from datetime import datetime
 
-    assert len(argv) in (3, 4), f"use {argv[0]} <data.conf> <model.conf> [random seed]"
-    random_seed = int(argv[3]) if len(argv) == 4 else 0
+    args = ArgumentParser()
+    args.add_argument("configs", nargs="+")
+    args.add_argument("--seed", type=int)
+    args.add_argument("--device", type=torch.device)
+    args = args.parse_args()
+
+    random_seed = args.seed if not args.seed is None else 0
+    if args.device:
+        flair.device = args.device
 
     conf = ConfigParser()
-    conf.read(argv[1])
-    conf.read(argv[2])
+    for config in args.configs:
+        conf.read(config)
 
+    conffilenames = (basename(f).replace('.conf', '') for f in args.configs)
     filename = ("trained-"
-                f"{basename(argv[1]).replace('.conf', '')}-"
-                f"{basename(argv[2]).replace('.conf', '')}-"
+                f"{'-'.join(conffilenames)}-"
                 f"{random_seed}-"
                 f"{datetime.now():%d-%m-%y-%H:%M}")
 

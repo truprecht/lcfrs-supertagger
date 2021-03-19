@@ -61,8 +61,8 @@ if __name__ == "__main__":
     for config in args.configs:
         conf.read(config)
 
-    conffilenames = (basename(f) for f in args.configs)
-    filename = ("trained-"
+    conffilenames = (basename(f).replace('.conf', '') for f in args.configs)
+    filename = ("lr-"
                 f"{'-'.join(conffilenames)}-"
                 f"{datetime.now():%d-%m-%y-%H:%M}")
 
