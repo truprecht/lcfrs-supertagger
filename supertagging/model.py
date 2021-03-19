@@ -28,7 +28,9 @@ def pretrainedstr(model, language):
 
 EmbeddingParameters = Parameters(
     embedding=(str, "word char"), tune_embedding=(bool, False), language=(str, ""),
-    pos_embedding_dim=(int, 20), word_embedding_dim=(int, 300), char_embedding_dim=(int, 64), char_bilstm_dim=(int, 100))
+    pos_embedding_dim=(int, 20),
+    word_embedding_dim=(int, 300), word_minfreq=(int, 1),
+    char_embedding_dim=(int, 64), char_bilstm_dim=(int, 100))
 def EmbeddingFactory(parameters, corpus):
     from flair.embeddings import FlairEmbeddings, StackedEmbeddings, \
         WordEmbeddings, OneHotEmbeddings, CharacterEmbeddings, TransformerWordEmbeddings
@@ -44,19 +46,31 @@ def EmbeddingFactory(parameters, corpus):
                 FlairEmbeddings(f"{parameters.language}-forward", fine_tune=parameters.tune_embedding),
                 FlairEmbeddings(f"{parameters.language}-backward", fine_tune=parameters.tune_embedding)]
         elif emb == "pos":
-            stack.append(OneHotEmbeddings(corpus, field="pos", embedding_length=parameters.pos_embedding_dim, min_freq=0))
+            stack.append(OneHotEmbeddings(
+                corpus,
+                field="pos",
+                embedding_length=parameters.pos_embedding_dim,
+                min_freq=1))
         elif emb == "fasttext":
             stack.append(WordEmbeddings(parameters.language))
         elif emb == "word":
-            stack.append(OneHotEmbeddings(corpus, field="text", embedding_length=parameters.word_embedding_dim, min_freq=3))
+            stack.append(OneHotEmbeddings(
+                corpus,
+                field="text",
+                embedding_length=parameters.word_embedding_dim,
+                min_freq=parameters.word_minfreq))
         elif emb == "char":
-            stack.append(CharacterEmbeddings(char_embedding_dim=parameters.char_embedding_dim, hidden_size_char=parameters.char_bilstm_dim))
+            stack.append(CharacterEmbeddings(
+                char_embedding_dim=parameters.char_embedding_dim,
+                hidden_size_char=parameters.char_bilstm_dim))
         else:
             raise NotImplementedError()
     return StackedEmbeddings(stack)
 
 ModelParameters = Parameters.merge(
-        Parameters(dropout=(float, 0.1), lstm_layers=(int, 1), lstm_size=(int, 100)),
+        Parameters(
+            dropout=(float, 0.0), word_dropout=(float, 0.0), locked_dropout=(float, 0.0),
+            lstm_layers=(int, 1), lstm_size=(int, 100)),
         EmbeddingParameters)
 EvalParameters = Parameters(
         ktags=(int, 5), fallbackprob=(float, 0.0),
@@ -97,9 +111,16 @@ class Supertagger(Model):
             postags.add_item(tag)
 
         sequence_tagger = SequenceMultiTagger(
-            parameters.lstm_size, EmbeddingFactory(parameters, corpus), [supertags, postags], ["supertag", "pos"],
-            use_rnn=(parameters.lstm_layers > 0), rnn_layers=parameters.lstm_layers,
-            dropout=parameters.dropout, reproject_embeddings=False
+            parameters.lstm_size,
+            EmbeddingFactory(parameters, corpus),
+            [supertags, postags],
+            ["supertag", "pos"],
+            use_rnn=(parameters.lstm_layers > 0),
+            rnn_layers=parameters.lstm_layers,
+            dropout=parameters.dropout,
+            word_dropout=parameters.word_dropout,
+            locked_dropout=parameters.locked_dropout,
+            reproject_embeddings=False
         )
 
         return cls(sequence_tagger, grammar)
