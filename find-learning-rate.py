@@ -31,7 +31,7 @@ def main(config, name, min, max, its: int = None):
         epoch = ceil(len(corpus.train)/tc.batchsize)
         its = epoch * 5
 
-    trainer = ModelTrainer(model, corpus, optimizer=Adam)
+    trainer = ModelTrainer(model, corpus)
     learning_rate_tsv = trainer.find_learning_rate(name, start_learning_rate=min, end_learning_rate=max, iterations=its)
     plotter = Plotter()
     plotter.plot_learning_rate(learning_rate_tsv)
