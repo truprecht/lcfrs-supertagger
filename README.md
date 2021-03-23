@@ -1,4 +1,9 @@
-# Build
+# LCFRS Supertag Parser
+
+This projects implements an extraction of lexical lcfrs rules from corpora of constituent trees, training of lexical rule prediction (supertagging) and parsing using lexical rules.
+The parts concerning grammars (extraction, parsing) were implemented as an extension of [disco-dop](https://github.com/andreasvc/disco-dop), the prediction was implemented using the [flair framework](https://github.com/flairNLP/flair) for neural nlp.
+
+## Build
 
 The project was developed and tested using python 3.8.
 We strongly recommend using a conda (or virtualenv) environment when running it:
@@ -11,7 +16,7 @@ Build and install all dependencies, including our fork of disco-dop:
     git submodule update --init --recursive
     pip install cython `cat requirements.txt` && pip install ./disco-dop/
 
-# Usage
+## Usage
 
 A call of
 
@@ -26,9 +31,16 @@ The script writes files to the folder specified in the ```filename``` field of c
     python training.py <data.conf> <model.conf>
 
 trains a sequence tagger as specified in ```<model.conf>``` using the prepared data.
-Existing configurations are ```bilstm-model.conf```, ```bert-model.conf``` and ```supervised-model.conf```.
+Existing configurations are ```bilstm-model.conf```, ```bert-model.conf```, ```supervised-small.conf``` and  ```supervised-large.conf```.
 During training, the script writes checkpoints to a newly created folder named after ```<data.conf>```, ```<model.conf>``` and the current date.
 Training is monitored using tensorboard, also there are lists of losses and scores in ```loss.tsv```.
+
+When the training finishes, the model is automatically evaluated on the test set and parsing scores are reported.
+You may repeat this evaluation (eg. with changed evaluation parameters or changed data) by calling
+
+    python evaluate.py <data.conf> <model>
+
+where ```<model>``` is a model file from the checkpoint folder (eg. ```trained-corpus-model-date/best-model.pt```).
 
 Calling
 
@@ -38,7 +50,7 @@ Calling
 should work out-of-the-box, as it uses a small (publicly available) sample of the alpino corpus distributed with disco-dop.
 Comments on the configuration files can be found in ```example.conf``` and ```example-model.conf```.
 
-## Tiger corpus
+### Tiger corpus
 
 This treebank needs a speacial treatment, because some nodes in the treebank are linked to multiple parents.
 The issue is solved by removing overfluous links (cf. https://github.com/mcoavoux/multilingual_disco_data/blob/master/generate_tiger_data.sh):
