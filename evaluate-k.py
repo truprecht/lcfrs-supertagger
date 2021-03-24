@@ -1,6 +1,8 @@
 """ Reads the development set of a corpus and parses the sentences with
     different amounts of predicted supertags (`k`).
 """
+import flair
+import torch
 
 from supertagging.data import SupertagParseDataset, corpusparam
 from supertagging.model import Supertagger, EvalParameters
@@ -11,29 +13,33 @@ from sys import argv
 import logging
 logging.getLogger("flair").setLevel(40)
 
-from getopt import gnu_getopt
-opts, args = gnu_getopt(argv[1:], "", ("batchsize=", "only_disc="))
-assert len(args) > 2, (
-    f"use {argv[0]} <data.conf> <model file> <values for k>+ [options ...]"
-    "there are the following options"
-    "   --batchsize=<num>"
-    "   --only_disc=(true|false|both|param)")
+from argparse import ArgumentParser
+args = ArgumentParser()
+args.add_argument("data")
+args.add_argument("model")
+args.add_argument("k", nargs="+", type=int)
+args.add_argument("--batchsize", type=int)
+args.add_argument("--only_disc", choices=("true", "false", "both", "param"))
+args.add_argument("--device", type=torch.device)
+args = args.parse_args()
+
+if args.device:
+    flair.device = args.device
 
 config = ConfigParser()
-config.read(args[0])
+config.read(args.data)
 ecdict = {**config["Eval-common"], **config["Eval-Development"]}
-for option, v in opts:
-    if not v: continue
-    option = option[2:]
-    ecdict[option] = v
+for option in ("batchsize", "only_disc"):
+    if not vars(args)[option] is None:
+        ecdict[option] = vars(args)[option]
 
 lc = corpusparam(**config["Corpus"], **config["Grammar"])
 
-model = Supertagger.load(args[1])
+model = Supertagger.load(args.model)
 model.eval()
 data = SupertagParseDataset(f"{lc.filename}.dev")
 
-for k in args[2:]:
+for k in args.k:
     print(f"running prediction for k = {k}")
     ecdict["ktags"] = k
     ep = EvalParameters(**ecdict)
