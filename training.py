@@ -6,7 +6,8 @@ from supertagging.model import Supertagger, ModelParameters, EvalParameters
 from supertagging.parameters import Parameters
 
 TrainingParameters = Parameters.merge(
-        Parameters(epochs=(int, 1), lr=(float, 0.01), batchsize=(int, 1), weight_decay=(float, 0.01), patience=(int, 20)),
+        Parameters(epochs=(int, 1), lr=(float, 0.01), batchsize=(int, 1), weight_decay=(float, 0.01),
+        patience=(int, 1), lr_decay=(float, 0.5), min_lr=(float, 0.0)),
         ModelParameters, EvalParameters)
 def main(config, name, random_seed):
     from flair.trainers import ModelTrainer
@@ -32,9 +33,10 @@ def main(config, name, random_seed):
         mini_batch_size=tc.batchsize,
         max_epochs=tc.epochs,
         checkpoint=True,
-        min_learning_rate=tc.lr/4,
+        min_learning_rate=tc.min_lr,
         weight_decay=tc.weight_decay,
-        patience=tc.patience)
+        patience=tc.patience,
+        anneal_factor=tc.lr_decay)
 
 if __name__ == "__main__":
     from argparse import ArgumentParser
