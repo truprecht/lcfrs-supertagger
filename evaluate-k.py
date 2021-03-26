@@ -18,8 +18,7 @@ args = ArgumentParser()
 args.add_argument("data")
 args.add_argument("model")
 args.add_argument("k", nargs="+", type=int)
-args.add_argument("--batchsize", type=int)
-args.add_argument("--only_disc", choices=("true", "false", "both", "param"))
+args.add_argument("-o", nargs="+")
 args.add_argument("--device", type=torch.device)
 args = args.parse_args()
 
@@ -29,9 +28,9 @@ if args.device:
 config = ConfigParser()
 config.read(args.data)
 ecdict = {**config["Eval-common"], **config["Eval-Development"]}
-for option in ("batchsize", "only_disc"):
-    if not vars(args)[option] is None:
-        ecdict[option] = vars(args)[option]
+for ov in args.o:
+    option, value = ov.split("=")
+    ecdict[option.strip()] = value.strip()
 
 lc = corpusparam(**config["Corpus"], **config["Grammar"])
 
