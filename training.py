@@ -7,7 +7,7 @@ from supertagging.parameters import Parameters
 
 TrainingParameters = Parameters.merge(
         Parameters(epochs=(int, 1), lr=(float, 0.01), batchsize=(int, 1), weight_decay=(float, 0.01),
-        patience=(int, 1), lr_decay=(float, 0.5), min_lr=(float, 0.0)),
+        patience=(int, 1), lr_decay=(float, 0.5), min_lr=(float, 0.0), optimizer=(str, "Adam")),
         ModelParameters, EvalParameters)
 def main(config, name, random_seed):
     from flair.trainers import ModelTrainer
@@ -26,7 +26,7 @@ def main(config, name, random_seed):
     model = Supertagger.from_corpus(corpus, grammar, tc)
     model.set_eval_param(tc)
 
-    trainer = ModelTrainer(model, corpus, optimizer=AdamW, use_tensorboard=True)
+    trainer = ModelTrainer(model, corpus, optimizer=getattr(torch.optim, tc.optimizer), use_tensorboard=True)
     trainer.train(
         name,
         learning_rate=tc.lr,
