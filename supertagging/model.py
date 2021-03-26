@@ -69,7 +69,7 @@ def EmbeddingFactory(parameters, corpus):
 
 ModelParameters = Parameters.merge(
         Parameters(
-            dropout=(float, 0.0), word_dropout=(float, 0.0), locked_dropout=(float, 0.0),
+            dropout=(float, 0.0), word_dropout=(float, 0.0), locked_dropout=(float, 0.0), lstm_dropout=(float, -1.0),
             lstm_layers=(int, 1), lstm_size=(int, 100)),
         EmbeddingParameters)
 EvalParameters = Parameters(
@@ -110,6 +110,10 @@ class Supertagger(Model):
         for tag in grammar.pos:
             postags.add_item(tag)
 
+        rnn_droupout = parameters.lstm_dropout
+        if rnn_droupout < 0:
+            rnn_droupout = parameters.dropout
+
         sequence_tagger = SequenceMultiTagger(
             parameters.lstm_size,
             EmbeddingFactory(parameters, corpus),
@@ -120,6 +124,7 @@ class Supertagger(Model):
             dropout=parameters.dropout,
             word_dropout=parameters.word_dropout,
             locked_dropout=parameters.locked_dropout,
+            lstm_dropout=rnn_droupout,
             reproject_embeddings=False
         )
 

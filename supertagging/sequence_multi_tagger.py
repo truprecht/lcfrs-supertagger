@@ -8,7 +8,7 @@ class SequenceMultiTagger(flair.nn.Model):
         same architecture for all tags. Only the final linear layer is split
         according to the tag types.
     """
-    def __init__(self, hidden_size: int, embeddings: TokenEmbeddings, tag_dictionaries: Iterable[Dictionary], tag_types: Iterable[str], **kwargs):
+    def __init__(self, hidden_size: int, embeddings: TokenEmbeddings, tag_dictionaries: Iterable[Dictionary], tag_types: Iterable[str], lstm_dropout=0.0, **kwargs):
         super(SequenceMultiTagger, self).__init__()
         newtags = Dictionary(add_unk=False)
         newtypestr = str(tuple(tag_types))
@@ -25,13 +25,14 @@ class SequenceMultiTagger(flair.nn.Model):
         for unsupported_param in ("use_crf", "beta", "loss_weights", "lstm_type"):
             assert not unsupported_param in kwargs, f"{unsupported_param} is not supported by SequenceMultiTagger"
         self.inner = SequenceTagger(hidden_size, embeddings, newtags, newtypestr, **kwargs)
+        self.lstm_dropout = lstm_dropout
         # change fixed dropout of 0.5 in flairs sequence tagger model
         if kwargs.get("use_rnn", False) and kwargs.get("rnn_layers", 1) > 1:
             self.inner.rnn = LSTM(
                 embeddings.embedding_length,
                 hidden_size,
                 num_layers=kwargs["rnn_layers"],
-                dropout=kwargs.get("dropout", 0.0),
+                dropout=self.lstm_dropout,
                 bidirectional=True,
                 batch_first=True)
         self.to(flair.device)
@@ -47,6 +48,7 @@ class SequenceMultiTagger(flair.nn.Model):
             "inner": self.inner._get_state_dict(),
             "type2dict": self.type2dict,
             "type2slice": self.type2slice,
+            "lstm_dropout": self.lstm_dropout
         }
 
     @classmethod
@@ -55,6 +57,7 @@ class SequenceMultiTagger(flair.nn.Model):
         super(SequenceMultiTagger, model).__init__()
         model.type2dict = state["type2dict"]
         model.type2slice = state["type2slice"]
+        model.lstm_dropout = state["lstm_dropout"]
 
         inner = state["inner"]
         model.inner = SequenceTagger(
@@ -78,7 +81,7 @@ class SequenceMultiTagger(flair.nn.Model):
                 model.inner.embeddings.embedding_length,
                 model.inner.hidden_size,
                 num_layers=model.inner.rnn_layers,
-                dropout=model.inner.use_dropout,
+                dropout=state["lstm_dropout"],
                 bidirectional=True,
                 batch_first=True)
         model.inner.load_state_dict(inner["state_dict"])
