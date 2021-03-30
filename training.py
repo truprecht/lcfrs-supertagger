@@ -45,12 +45,11 @@ if __name__ == "__main__":
     from datetime import datetime
 
     args = ArgumentParser()
-    args.add_argument("configs", nargs="+")
-    args.add_argument("--seed", type=int)
-    args.add_argument("--device", type=torch.device)
+    args.add_argument("configs", nargs="+", help="configuration files for corpus and model, e.g. `example.conf example-model.conf`")
+    args.add_argument("--seed", type=int, help="sets an integer as seed for initialization of the neural network, default is `0`", default=0)
+    args.add_argument("--device", type=torch.device, choices=["cpu"]+[f"cuda:{n}" for n in range(torch.cuda.device_count())], help="sets the torch device")
     args = args.parse_args()
 
-    random_seed = args.seed if not args.seed is None else 0
     if args.device:
         flair.device = args.device
 
@@ -61,7 +60,7 @@ if __name__ == "__main__":
     conffilenames = (basename(f).replace('.conf', '') for f in args.configs)
     filename = ("trained-"
                 f"{'-'.join(conffilenames)}-"
-                f"{random_seed}-"
+                f"{args.seed}-"
                 f"{datetime.now():%d-%m-%y-%H:%M}")
 
-    main(conf, filename, random_seed)
+    main(conf, filename, args.seed)
