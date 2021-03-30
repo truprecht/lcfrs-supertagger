@@ -1,3 +1,3 @@
 [submodule "disco-dop"]
 	path = disco-dop
-	url = git@gitlab.tcs.inf.tu-dresden.de:ruprecht/disco-dop.git
+	url = https://github.com/truprecht/disco-dop.git
