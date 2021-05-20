@@ -20,6 +20,7 @@ from discodop.treetransforms import unbinarize, removefanoutmarkers
 from discodop.eval import Evaluator, readparam
 
 grammar = load(open(f"{config['filename']}.grammar", "rb"))
+print("using", len(grammar.tags), "supertags")
 i = 0
 evaluator = Evaluator(readparam(config["evalfilename"]))
 for sentence in data:
@@ -33,9 +34,8 @@ for sentence in data:
         leaves = (f"({p} {i})" for p, i in zip(poss, range(len(words))))
         parse = ParentedTree(f"(NOPARSE {' '.join(leaves)})")
     gold = ParentedTree(sentence.get_labels("tree")[0].value)
-    gold = ParentedTree.convert(unbinarize(removefanoutmarkers(Tree.convert(gold))))
-    parse = ParentedTree.convert(unbinarize(removefanoutmarkers(Tree.convert(parse))))
+    gold = ParentedTree.convert(removefanoutmarkers(unbinarize(Tree.convert(gold))))
+    parse = ParentedTree.convert(removefanoutmarkers(unbinarize(Tree.convert(parse))))
     evaluator.add(i, gold.copy(deep=True), list(words), parse.copy(deep=True), list(words))
     i += 1
 print(evaluator.summary())
-evaluator.breakdowns()
