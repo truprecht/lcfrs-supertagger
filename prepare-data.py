@@ -9,14 +9,14 @@ assert len(argv) == 2, (f"use {argv[0]} <data.conf>")
 
 cp = ConfigParser()
 cp.read(argv[1])
-config = corpusparam(**cp["Corpus"], **cp["Grammar"])
+config = corpusparam(**cp["Corpus"], **cp["Grammar"], **cp["Lexicalization"])
 
 from discodop.tree import Tree
 from discodop.treebank import READERS
 from discodop.treetransforms import addfanoutmarkers, binarize, collapseunary
 from discodop.lexgrammar import SupertagCorpus, SupertagGrammar
 
-corpus = READERS[config.inputfmt](config.filename, encoding=config.inputenc, punct="move")
+corpus = READERS[config.inputfmt](config.filename, encoding=config.inputenc, punct="move", headrules=config.headrules or None)
 trees = [
     addfanoutmarkers(
      binarize(
@@ -26,7 +26,11 @@ trees = [
     for t in corpus.trees().values()]
 sents = list(corpus.sents().values())
 
-corpus = SupertagCorpus(trees, sents)
+corpus = SupertagCorpus(
+    trees, sents,
+    split_strictness=config.split_strictness,
+    marker=config.propterm_marker,
+    renaming_scheme=config.propterm_nonterminals)
 
 size = len(corpus.sent_corpus)
 portions = config.split.split()
@@ -42,6 +46,7 @@ else:
     limits = tuple((name, slice(start, end)) for (name, start, end) in zip(names, limits[-4:-1], limits[-3:]))
 
 tdtidx = 0
+nt, strict = corpus.options.renaming_scheme, corpus.options.split_strictness
 for (name, indices) in limits:
     tagfile = open(f"{config.filename}.{name}.tags", "w")
     treefile = open(f"{config.filename}.{name}.trees", "w")
@@ -51,7 +56,7 @@ for (name, indices) in limits:
     for (sentence, poss, tags, tree) in zip(subcorpus.sent_corpus,
             subcorpus.pos_corpus, subcorpus.supertag_corpus, subcorpus.tree_corpus):
         for (word, pos, tag) in zip(sentence, poss, tags):
-            print(f"{word} {subcorpus.pos[pos]} {subcorpus.supertags[tag].pos()}", file=tagfile)
+            print(f"{word} {subcorpus.pos[pos]} {subcorpus.supertags[tag].pos(nt, strict)}", file=tagfile)
         print(file=tagfile)
         print(tree, file=treefile)
     treefile.close()

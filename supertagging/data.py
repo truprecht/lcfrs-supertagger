@@ -3,7 +3,8 @@ from .parameters import Parameters
 
 corpusparam = Parameters(
     language=(str, None),
-    filename=(str, None), split=(str, None),
+    filename=(str, None), split=(str, None), headrules=(str, ""),
+    propterm_nonterminals=(str, "strict"), propterm_marker=(str, ""), split_strictness=(str, "strict"),
     inputenc=(str, "utf8"), inputfmt=(str, "export"), h=(int, 0), v=(int, 1))
 
 COLUMN_NAME_MAP = {0: "text", 1: "pos", 2: "supertag"}

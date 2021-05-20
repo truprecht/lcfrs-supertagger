@@ -12,16 +12,16 @@ from supertagging.data import SupertagParseDataset
 config = ConfigParser()
 config.read(argv[1])
 
-data = SupertagParseDataset(f"{config['Corpus']['filename']}.train")
+config = { **config["Corpus"], **config["Eval-common"], **config["Eval-Development"] }
+data = SupertagParseDataset(f"{config['filename']}.train")
 
 from discodop.tree import ParentedTree, Tree
 from discodop.treetransforms import unbinarize, removefanoutmarkers
 from discodop.eval import Evaluator, readparam
-from discodop.lexgrammar import SupertagGrammar
 
-grammar = load(open(f"{config['Corpus']['filename']}.grammar", "rb"))
+grammar = load(open(f"{config['filename']}.grammar", "rb"))
 i = 0
-evaluator = Evaluator(readparam("proper.prm"))
+evaluator = Evaluator(readparam(config["evalfilename"]))
 for sentence in data:
     words = tuple(t.text for t in sentence)
     poss = tuple(t.get_tag("pos").value for t in sentence)
@@ -38,3 +38,4 @@ for sentence in data:
     evaluator.add(i, gold.copy(deep=True), list(words), parse.copy(deep=True), list(words))
     i += 1
 print(evaluator.summary())
+evaluator.breakdowns()
