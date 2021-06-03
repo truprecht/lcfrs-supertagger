@@ -105,7 +105,7 @@ class Supertagger(Model):
         """
         supertags = Dictionary(add_unk=False)
         for tag in grammar.tags:
-            supertags.add_item(tag.pos())
+            supertags.add_item(tag.pos(grammar.nt_names, grammar.splits))
         postags = Dictionary(add_unk=False)
         for tag in grammar.pos:
             postags.add_item(tag)
@@ -286,8 +286,7 @@ class Supertagger(Model):
                         acc_ctr["pos"] += 1
                 acc_ctr["all"] += len(sentence)
                 sent = [token.text for token in sentence]
-                gold = Tree(sentence.get_labels("tree")[0].value)
-                gold = ParentedTree.convert(unbinarize(removefanoutmarkers(gold)))
+                gold = ParentedTree(sentence.get_labels("tree")[0].value)
                 parse = Tree(sentence.get_labels("predicted")[0].value)
                 parse = ParentedTree.convert(unbinarize(removefanoutmarkers(parse)))
                 if parse.label == "NOPARSE":

@@ -34,7 +34,6 @@ for sentence in data:
         leaves = (f"({p} {i})" for p, i in zip(poss, range(len(words))))
         parse = ParentedTree(f"(NOPARSE {' '.join(leaves)})")
     gold = ParentedTree(sentence.get_labels("tree")[0].value)
-    gold = ParentedTree.convert(removefanoutmarkers(unbinarize(Tree.convert(gold))))
     parse = ParentedTree.convert(removefanoutmarkers(unbinarize(Tree.convert(parse))))
     evaluator.add(i, gold.copy(deep=True), list(words), parse.copy(deep=True), list(words))
     i += 1

@@ -12,22 +12,24 @@ cp.read(argv[1])
 config = corpusparam(**cp["Corpus"], **cp["Grammar"], **cp["Lexicalization"])
 
 from discodop.tree import Tree
-from discodop.treebank import READERS
+from discodop.treebank import Item, READERS
 from discodop.treetransforms import addfanoutmarkers, binarize, collapseunary
 from discodop.lexgrammar import SupertagCorpus, SupertagGrammar
 
-corpus = READERS[config.inputfmt](config.filename, encoding=config.inputenc, punct="move", headrules=config.headrules or None)
-trees = [
-    addfanoutmarkers(
+def add_bintree(corpus_item: Item):
+    # TODO: move this into Supertagcorpus
+    bt = addfanoutmarkers(
      binarize(
       collapseunary(
-       Tree.convert(t), collapseroot=True, collapsepos=True),
+       Tree.convert(corpus_item.tree), collapseroot=True, collapsepos=True),
       horzmarkov=config.h, vertmarkov=config.v))
-    for t in corpus.trees().values()]
-sents = list(corpus.sents().values())
+    return (corpus_item, bt)
+
+corpus = READERS[config.inputfmt](config.filename, encoding=config.inputenc, punct="move", headrules=config.headrules or None)
+corpus = (add_bintree(t) for _, t in corpus.itertrees())
 
 corpus = SupertagCorpus(
-    trees, sents,
+    corpus,
     split_strictness=config.split_strictness,
     marker=config.propterm_marker,
     renaming_scheme=config.propterm_nonterminals)

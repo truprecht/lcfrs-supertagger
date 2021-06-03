@@ -18,7 +18,7 @@ def main(config, name, random_seed):
 
     manual_seed(random_seed)
 
-    cp = corpusparam(**config["Corpus"], **config["Grammar"])
+    cp = corpusparam(**config["Corpus"], **config["Grammar"], **config["Lexicalization"])
     corpus = SupertagParseCorpus(cp.filename)
     grammar = load(open(f"{cp.filename}.grammar", "rb"))
 
