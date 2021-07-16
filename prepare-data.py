@@ -16,17 +16,17 @@ from discodop.treebank import Item, READERS
 from discodop.treetransforms import addfanoutmarkers, binarize, collapseunary
 from discodop.lexgrammar import SupertagCorpus, SupertagGrammar
 
-def add_bintree(corpus_item: Item):
+def add_bintree(corpus_item: Item, **args):
     # TODO: move this into Supertagcorpus
     bt = addfanoutmarkers(
      binarize(
       collapseunary(
        Tree.convert(corpus_item.tree), collapseroot=True, collapsepos=True),
-      horzmarkov=config.h, vertmarkov=config.v))
+      horzmarkov=config.h, vertmarkov=config.v, **args))
     return (corpus_item, bt)
 
 corpus = READERS[config.inputfmt](config.filename, encoding=config.inputenc, punct="move", headrules=config.headrules or None)
-corpus = (add_bintree(t) for _, t in corpus.itertrees())
+corpus = (add_bintree(t, headoutward=bool(config.headrules)) for _, t in corpus.itertrees())
 
 corpus = SupertagCorpus(
     corpus,
