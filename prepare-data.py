@@ -18,11 +18,10 @@ from discodop.lexgrammar import SupertagCorpus, SupertagGrammar
 
 def add_bintree(corpus_item: Item, **args):
     # TODO: move this into Supertagcorpus
-    bt = addfanoutmarkers(
-     binarize(
+    bt =  binarize(
       collapseunary(
        Tree.convert(corpus_item.tree), collapseroot=True, collapsepos=True),
-      horzmarkov=config.h, vertmarkov=config.v, **args))
+      horzmarkov=config.h, vertmarkov=config.v, **args)
     return (corpus_item, bt)
 
 corpus = READERS[config.inputfmt](config.filename, encoding=config.inputenc, punct="move", headrules=config.headrules or None)
