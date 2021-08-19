@@ -7,7 +7,7 @@ from flair.training_utils import Result
 
 import torch
 
-from discodop.lexgrammar import SupertagGrammar
+from discodop.supertags import SupertagGrammar
 from discodop.eval import Evaluator, readparam
 
 from .data import SupertagParseDataset
@@ -105,10 +105,10 @@ class Supertagger(Model):
         """
         supertags = Dictionary(add_unk=False)
         for tag in grammar.tags:
-            supertags.add_item(tag.pos(grammar.nt_names, grammar.splits))
-        postags = Dictionary(add_unk=False)
-        for tag in grammar.pos:
-            postags.add_item(tag)
+            supertags.add_item(tag.str_tag())
+        # postags = Dictionary(add_unk=False)
+        # for tag in grammar.pos:
+        #     postags.add_item(tag)
 
         rnn_droupout = parameters.lstm_dropout
         if rnn_droupout < 0:
@@ -117,8 +117,8 @@ class Supertagger(Model):
         sequence_tagger = SequenceMultiTagger(
             parameters.lstm_size,
             EmbeddingFactory(parameters, corpus),
-            [supertags, postags],
-            ["supertag", "pos"],
+            [supertags],  #[supertags, postags],
+            ["supertag"],  #["supertag", "pos"],
             use_rnn=(parameters.lstm_layers > 0),
             rnn_layers=parameters.lstm_layers,
             dropout=parameters.dropout,
@@ -171,10 +171,10 @@ class Supertagger(Model):
         with torch.no_grad():
             scores = dict(self.sequence_tagger.forward(batch))
             tagscores = scores["supertag"].cpu()
-            pos = scores["pos"].argmax(dim=2)
+            # pos = scores["pos"].argmax(dim=2)
             tags = argpartition(-tagscores, self.ktags, axis=2)[:, :, 0:self.ktags]
             neglogprobs = -tagscores.gather(2, tags).log_softmax(dim=2)
-            for sentence, senttags, sentweights, sentpos in zip(batch, tags, neglogprobs, pos):
+            for sentence, senttags, sentweights in zip(batch, tags, neglogprobs):
                 # store tags in tokens
                 if supertag_storage_mode in ("both", "kbest", "best"):
                     for token, ktags, kweights, in zip(sentence, senttags, sentweights):
@@ -185,22 +185,23 @@ class Supertagger(Model):
                         if supertag_storage_mode in ("both", "best"):
                             best_tag = kweights.argmax()
                             token.add_tag_label(supertag_label_name, Label(ktags[best_tag], kweights[best_tag].item()))
-                if postag_storage_mode:
-                    for token, postag in zip(sentence, sentpos):
-                        strpos = self.sequence_tagger.type2dict["pos"].get_item_for_index(postag)
-                        token.add_tag_label(postag_label_name, Label(strpos))
+                # if postag_storage_mode:
+                #     for token, postag in zip(sentence, sentpos):
+                #         strpos = self.sequence_tagger.type2dict["pos"].get_item_for_index(postag)
+                #         token.add_tag_label(postag_label_name, Label(strpos))
 
                 # parse sentence and store parse tree in sentence
                 sentweights = sentweights[:len(sentence)]
                 predicted_tags = (
                     zip(ktags, kweights)
                     for ktags, kweights in zip(senttags[:len(sentence)], sentweights))
-                predicted_pos = [self.__grammar__.pos[tag] for tag in sentpos[:len(sentence)]]
-                parses = self.__grammar__.parse(predicted_pos, predicted_tags, ktags=self.ktags, estimates=sentweights.numpy().min(axis=1))
+                # predicted_pos = [self.__grammar__.pos[tag] for tag in sentpos[:len(sentence)]]
+                # parses = self.__grammar__.parse(predicted_pos, predicted_tags, ktags=self.ktags, estimates=sentweights.numpy().min(axis=1))
+                parses = self.__grammar__.parse(predicted_tags, ktags=self.ktags, length=len(sentence), estimates=sentweights.numpy().min(axis=1))
                 try:
                     parse = str(next(parses))
                 except StopIteration:
-                    leaves = (f"({p} {i})" for i, p in enumerate(predicted_pos))
+                    leaves = (f"({p} {i})" for i, p in enumerate(["NP"]*len(sentence)))
                     parse = f"(NOPARSE {' '.join(leaves)})"
                 sentence.set_label(label_name, parse)
             store_embeddings(batch, storage_mode=embedding_storage_mode)
@@ -237,7 +238,6 @@ class Supertagger(Model):
         """
         from flair.datasets import DataLoader
         from discodop.tree import ParentedTree, Tree
-        from discodop.treetransforms import unbinarize, removefanoutmarkers
         from discodop.eval import Evaluator, readparam
         from timeit import default_timer
         from collections import Counter
@@ -288,7 +288,7 @@ class Supertagger(Model):
                 sent = [token.text for token in sentence]
                 gold = ParentedTree(sentence.get_labels("tree")[0].value)
                 parse = Tree(sentence.get_labels("predicted")[0].value)
-                parse = ParentedTree.convert(unbinarize(removefanoutmarkers(parse)))
+                parse = ParentedTree.convert(parse)
                 if parse.label == "NOPARSE":
                     noparses += 1
                 for evaluator in evaluators.values():
@@ -318,7 +318,7 @@ class Supertagger(Model):
     def _get_state_dict(self):
         return {
             "sequence_tagger": self.sequence_tagger._get_state_dict(),
-            "grammar": self.__grammar__.todict(),
+            "grammar": self.__grammar__.__getstate__(),
             "ktags": self.ktags,
             "evalparam": self.evalparam
         }
@@ -326,7 +326,7 @@ class Supertagger(Model):
     @classmethod
     def _init_model_with_state_dict(cls, state):
         sequence_tagger = SequenceMultiTagger._init_model_with_state_dict(state["sequence_tagger"])
-        grammar = SupertagGrammar.fromdict(state["grammar"])
+        grammar = SupertagGrammar(state["grammar"]["tags"], state["grammar"]["roots"])
         model = cls(sequence_tagger, grammar)
         model.__ktags__ = state["ktags"]
         model.__evalparam__ = state["evalparam"]

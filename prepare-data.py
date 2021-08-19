@@ -9,31 +9,20 @@ assert len(argv) == 2, (f"use {argv[0]} <data.conf>")
 
 cp = ConfigParser()
 cp.read(argv[1])
-config = corpusparam(**cp["Corpus"], **cp["Grammar"], **cp["Lexicalization"])
+config = corpusparam(**cp["Corpus"], **cp["Grammar"])
 
-from discodop.tree import Tree
-from discodop.treebank import Item, READERS
-from discodop.treetransforms import addfanoutmarkers, binarize, collapseunary
-from discodop.lexgrammar import SupertagCorpus, SupertagGrammar
+from discodop.treebank import READERS
 
-def add_bintree(corpus_item: Item, **args):
-    # TODO: move this into Supertagcorpus
-    bt =  binarize(
-      collapseunary(
-       Tree.convert(corpus_item.tree), collapseroot=True, collapsepos=True),
-      horzmarkov=config.h, vertmarkov=config.v, **args)
-    return (corpus_item, bt)
+from discodop.supertags.extraction import SupertagExtractor, GuideFactory, CompositionalNtConstructor
+from discodop.supertags import SupertagGrammar
 
 corpus = READERS[config.inputfmt](config.filename, encoding=config.inputenc, punct="move", headrules=config.headrules or None)
-corpus = (add_bintree(t, headoutward=bool(config.headrules)) for _, t in corpus.itertrees())
+extract = SupertagExtractor(
+    GuideFactory(config.guide),
+    CompositionalNtConstructor(config.nonterminal_features.split()),
+    headoutward=bool(config.headrules),
+    horzmarkov=config.h, vertmarkov=config.v)
 
-corpus = SupertagCorpus(
-    corpus,
-    split_strictness=config.split_strictness,
-    marker=config.propterm_marker,
-    renaming_scheme=config.propterm_nonterminals)
-
-size = len(corpus.sent_corpus)
 portions = config.split.split()
 names = "train dev test".split()
 assert len(portions) in [3,4]
@@ -47,18 +36,18 @@ else:
     limits = tuple((name, slice(start, end)) for (name, start, end) in zip(names, limits[-4:-1], limits[-3:]))
 
 tdtidx = 0
-nt, strict = corpus.options.renaming_scheme, corpus.options.split_strictness
-for (name, indices) in limits:
-    tagfile = open(f"{config.filename}.{name}.tags", "w")
-    treefile = open(f"{config.filename}.{name}.trees", "w")
-    subcorpus = corpus.subcorpus(indices)
-    if name == "train":
-        dump(SupertagGrammar(subcorpus), open(f"{config.filename}.grammar", "wb"))
-    for (sentence, poss, tags, tree) in zip(subcorpus.sent_corpus,
-            subcorpus.pos_corpus, subcorpus.supertag_corpus, subcorpus.tree_corpus):
-        for (word, pos, tag) in zip(sentence, poss, tags):
-            print(f"{word} {subcorpus.pos[pos]} {subcorpus.supertags[tag].pos(nt, strict)}", file=tagfile)
-        print(file=tagfile)
-        print(tree, file=treefile)
-    treefile.close()
-    tagfile.close()
+tagfiles = { name: open(f"{config.filename}.{name}.tags", "w") for name, _ in limits }
+treefiles = { name: open(f"{config.filename}.{name}.trees", "w") for name, _ in limits }
+for i, (_, item) in enumerate(corpus.itertrees()):
+    subs = [name for name, s in limits if s.start <= i < s.stop]
+    supertags = list(extract(item.tree, keep=("train" in subs)))
+    for sub in subs:
+        for word, tag in zip(item.sent, supertags):
+            print(f"{word} {tag.pos} {tag.str_tag()}", file=tagfiles[sub])
+        print(file=tagfiles[sub])
+        print(item.tree, file=treefiles[sub])
+dump(SupertagGrammar(tuple(extract.supertags), tuple(extract.roots)), open(f"{config.filename}.grammar", "wb"))
+for file in tagfiles.values():
+    file.close()
+for file in treefiles.values():
+    file.close()

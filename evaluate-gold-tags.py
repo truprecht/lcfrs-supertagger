@@ -15,8 +15,7 @@ config.read(argv[1])
 config = { **config["Corpus"], **config["Eval-common"], **config["Eval-Development"] }
 data = SupertagParseDataset(f"{config['filename']}.train")
 
-from discodop.tree import ParentedTree, Tree
-from discodop.treetransforms import unbinarize, removefanoutmarkers
+from discodop.tree import ParentedTree
 from discodop.eval import Evaluator, readparam
 
 grammar = load(open(f"{config['filename']}.grammar", "rb"))
@@ -27,14 +26,14 @@ for sentence in data:
     words = tuple(t.text for t in sentence)
     poss = tuple(t.get_tag("pos").value for t in sentence)
     tags = tuple(((t.get_tag("supertag").value, 0.0),) for t in sentence)
-    parses = grammar.parse(poss, tags, posmode=True)
+    parses = grammar.parse(tags, str_tag_mode=True)
     try:
         parse = next(parses)
     except StopIteration:
         leaves = (f"({p} {i})" for p, i in zip(poss, range(len(words))))
         parse = ParentedTree(f"(NOPARSE {' '.join(leaves)})")
     gold = ParentedTree(sentence.get_labels("tree")[0].value)
-    parse = ParentedTree.convert(removefanoutmarkers(unbinarize(Tree.convert(parse))))
+    parse = ParentedTree.convert(parse)
     evaluator.add(i, gold.copy(deep=True), list(words), parse.copy(deep=True), list(words))
     i += 1
 print(evaluator.summary())

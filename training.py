@@ -11,14 +11,12 @@ TrainingParameters = Parameters.merge(
         ModelParameters, EvalParameters)
 def main(config, name, random_seed):
     from flair.trainers import ModelTrainer
-    from torch.optim import AdamW
     from torch import manual_seed
     from pickle import load
-    from discodop.lexgrammar import SupertagGrammar
 
     manual_seed(random_seed)
 
-    cp = corpusparam(**config["Corpus"], **config["Grammar"], **config["Lexicalization"])
+    cp = corpusparam(**config["Corpus"], **config["Grammar"])
     corpus = SupertagParseCorpus(cp.filename)
     grammar = load(open(f"{cp.filename}.grammar", "rb"))
 
