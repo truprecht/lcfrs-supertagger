@@ -1,6 +1,5 @@
 from typing import Tuple, Union, List
 
-from flair.datasets.sequence_labeling import Corpus
 from flair.data import Dictionary, Label, Sentence
 from flair.nn import Model
 from flair.training_utils import Result
@@ -10,7 +9,7 @@ import torch
 from discodop.supertags import SupertagGrammar
 from discodop.eval import Evaluator, readparam
 
-from .data import SupertagParseDataset
+from .data import SupertagParseDataset, SupertagParseCorpus
 from .parameters import Parameters
 from .sequence_multi_tagger import SequenceMultiTagger
 
@@ -77,12 +76,13 @@ EvalParameters = Parameters(
         batchsize=(int, 1),
         evalfilename=(str, None), only_disc=(str, "both"), accuracy=(str, "both"), pos_accuracy=(bool, True))
 class Supertagger(Model):
-    def __init__(self, sequence_tagger: SequenceMultiTagger, grammar: SupertagGrammar):
+    def __init__(self, sequence_tagger: SequenceMultiTagger, grammar: SupertagGrammar, othertagtypes: Tuple[str] = ()):
         super(Supertagger, self).__init__()
         self.sequence_tagger = sequence_tagger
         self.__grammar__ = grammar
         self.__evalparam__ = None
         self.__ktags__ = 1
+        self.othertagtypes = othertagtypes
 
     def set_eval_param(self, config: EvalParameters):
         self.__grammar__.fallback_prob = config.fallbackprob
@@ -98,17 +98,18 @@ class Supertagger(Model):
         return self.__ktags__
 
     @classmethod
-    def from_corpus(cls, corpus: Corpus, grammar: SupertagGrammar, parameters: ModelParameters):
+    def from_corpus(cls, corpus: SupertagParseCorpus, grammar: SupertagGrammar, parameters: ModelParameters):
         """ Construct an instance of the model using
             * supertags and pos tags from `grammar`, and
             * word embeddings (as specified in `parameters`) from `corpus`.
         """
-        supertags = Dictionary(add_unk=False)
-        for tag in grammar.tags:
-            supertags.add_item(tag.str_tag())
-        # postags = Dictionary(add_unk=False)
-        # for tag in grammar.pos:
-        #     postags.add_item(tag)
+        tag_dicts = { k: Dictionary(add_unk=False) for k in ("supertag",) + corpus.separate_attribs }
+        for str_tag in grammar.str_tags:
+            tag_dicts["supertag"].add_item(str_tag)
+        for sentence in corpus.train:
+            for token in sentence:
+                for k in corpus.separate_attribs:
+                    tag_dicts[k].add_item(token.get_tag(k).value)
 
         rnn_droupout = parameters.lstm_dropout
         if rnn_droupout < 0:
@@ -117,8 +118,8 @@ class Supertagger(Model):
         sequence_tagger = SequenceMultiTagger(
             parameters.lstm_size,
             EmbeddingFactory(parameters, corpus),
-            [supertags],  #[supertags, postags],
-            ["supertag"],  #["supertag", "pos"],
+            tag_dicts.values(),
+            tag_dicts.keys(),
             use_rnn=(parameters.lstm_layers > 0),
             rnn_layers=parameters.lstm_layers,
             dropout=parameters.dropout,
@@ -128,7 +129,7 @@ class Supertagger(Model):
             reproject_embeddings=False
         )
 
-        return cls(sequence_tagger, grammar)
+        return cls(sequence_tagger, grammar, othertagtypes = tuple(corpus.separate_attribs))
 
     def forward_loss(self, data_points):
         return self.sequence_tagger.forward_loss(data_points)
@@ -141,7 +142,7 @@ class Supertagger(Model):
             return_loss: bool = False,
             embedding_storage_mode: str = "none",
             supertag_storage_mode: str = "both",
-            postag_storage_mode: bool = True):
+            othertag_storage_mode: bool = True):
         """ Predicts pos tags and supertags for the given sentences and parses
             them.
             :param label_name: the predicted parse trees are stored in each
@@ -165,43 +166,50 @@ class Supertagger(Model):
 
         if not label_name:
             label_name = "predicted"
-        supertag_label_name = f"{label_name}-supertag"
-        postag_label_name = f"{label_name}-pos"
+        get_label_name = lambda x: f"{label_name}-{x}"
+
 
         with torch.no_grad():
             scores = dict(self.sequence_tagger.forward(batch))
             tagscores = scores["supertag"].cpu()
-            # pos = scores["pos"].argmax(dim=2)
             tags = argpartition(-tagscores, self.ktags, axis=2)[:, :, 0:self.ktags]
             neglogprobs = -tagscores.gather(2, tags).log_softmax(dim=2)
-            for sentence, senttags, sentweights in zip(batch, tags, neglogprobs):
+            othertags = (
+                {
+                    k: [str_or_none(self.sequence_tagger.get_tag(k, idx)) for idx in scores[k][sentidx, :len(sent)].argmax(dim=-1)]
+                    for k in self.othertagtypes
+                } for sentidx, sent in enumerate(batch) )
+
+            for sentence, senttags, sentweights, othertag in zip(batch, tags, neglogprobs, othertags):
                 # store tags in tokens
                 if supertag_storage_mode in ("both", "kbest", "best"):
-                    for token, ktags, kweights, in zip(sentence, senttags, sentweights):
+                    for token, ktags, kweights in zip(sentence, senttags, sentweights):
                         ktags = tuple(self.sequence_tagger.type2dict["supertag"].get_item_for_index(t) for t in ktags)
                         kweights = (-kweights).exp()
                         if supertag_storage_mode in ("both", "kbest"):
-                            token.add_tags_proba_dist(supertag_label_name, [Label(t, w.item()) for t, w in zip(ktags, kweights)])
+                            token.add_tags_proba_dist(get_label_name("supertag"), [Label(t, w.item()) for t, w in zip(ktags, kweights)])
                         if supertag_storage_mode in ("both", "best"):
                             best_tag = kweights.argmax()
-                            token.add_tag_label(supertag_label_name, Label(ktags[best_tag], kweights[best_tag].item()))
-                # if postag_storage_mode:
-                #     for token, postag in zip(sentence, sentpos):
-                #         strpos = self.sequence_tagger.type2dict["pos"].get_item_for_index(postag)
-                #         token.add_tag_label(postag_label_name, Label(strpos))
+                            token.add_tag_label(get_label_name("supertag"), Label(ktags[best_tag], kweights[best_tag].item()))
+                if othertag_storage_mode:
+                    for tagt in self.othertagtypes:
+                        for token, tagstr in zip(sentence, othertag[tagt]):
+                            token.add_tag_label(get_label_name(tagt), Label(str(tagstr)))
 
                 # parse sentence and store parse tree in sentence
                 sentweights = sentweights[:len(sentence)]
                 predicted_tags = (
                     zip(ktags, kweights)
                     for ktags, kweights in zip(senttags[:len(sentence)], sentweights))
-                # predicted_pos = [self.__grammar__.pos[tag] for tag in sentpos[:len(sentence)]]
-                # parses = self.__grammar__.parse(predicted_pos, predicted_tags, ktags=self.ktags, estimates=sentweights.numpy().min(axis=1))
-                parses = self.__grammar__.parse(predicted_tags, ktags=self.ktags, length=len(sentence), estimates=sentweights.numpy().min(axis=1))
+
+                parses = self.__grammar__.parse(predicted_tags, **othertag, ktags=self.ktags, length=len(sentence), estimates=sentweights.numpy().min(axis=1))
                 try:
                     parse = str(next(parses))
                 except StopIteration:
-                    leaves = (f"({p} {i})" for i, p in enumerate(["NP"]*len(sentence)))
+                    if "pos" in othertag:
+                        leaves = (f"({p} {i})" for i, p in enumerate(othertag["pos"]))
+                    else:
+                        leaves = (f"({p} {i})" for i, p in enumerate(["NOPARSE"]*len(sentence)))
                     parse = f"(NOPARSE {' '.join(leaves)})"
                 sentence.set_label(label_name, parse)
             store_embeddings(batch, storage_mode=embedding_storage_mode)
@@ -216,7 +224,7 @@ class Supertagger(Model):
             out_path = None,
             only_disc: str = "both",
             accuracy: str = "both",
-            pos_accuracy: bool = True,
+            othertag_accuracy: bool = True,
             return_loss: bool = True) -> Tuple[Result, float]:
         """ Predicts supertags, pos tags and parse trees, and reports the
             predictions scores for a set of sentences.
@@ -263,7 +271,7 @@ class Supertagger(Model):
             loss = self.predict(batch,
                     embedding_storage_mode=embedding_storage_mode,
                     supertag_storage_mode=accuracy,
-                    postag_storage_mode=pos_accuracy,
+                    othertag_storage_mode=othertag_accuracy,
                     label_name='predicted',
                     return_loss=return_loss)
             eval_loss += loss if return_loss else 0
@@ -282,8 +290,9 @@ class Supertagger(Model):
                     if accuracy in ("best", "both") and token.get_tag("supertag").value == \
                             token.get_tag('predicted-supertag').value:
                         acc_ctr["best"] += 1
-                    if pos_accuracy and token.get_tag("pos").value == token.get_tag("predicted-pos").value:
-                        acc_ctr["pos"] += 1
+                    if othertag_accuracy:
+                        for tagt in self.othertagtypes:
+                            acc_ctr[tagt] += int(token.get_tag(tagt).value == token.get_tag(f"predicted-{tagt}").value)
                 acc_ctr["all"] += len(sentence)
                 sent = [token.text for token in sentence]
                 gold = ParentedTree(sentence.get_labels("tree")[0].value)
@@ -302,8 +311,9 @@ class Supertagger(Model):
             scores["accuracy-kbest"] = acc_ctr["kbest"] / acc_ctr["all"]
         if accuracy in ("both", "best"):
             scores["accuracy-best"] = acc_ctr["best"] / acc_ctr["all"]
-        if pos_accuracy:
-            scores["accuracy-pos"] = acc_ctr["pos"] / acc_ctr["all"]
+        if othertag_accuracy:
+            for tagt in self.othertagtypes:
+                scores[f"accuracy-{tagt}"] = acc_ctr[tagt] / acc_ctr["all"]
         scores["coverage"] = 1-(noparses/i)
         scores["time"] = end_time - start_time
         return (
@@ -320,7 +330,8 @@ class Supertagger(Model):
             "sequence_tagger": self.sequence_tagger._get_state_dict(),
             "grammar": self.__grammar__.__getstate__(),
             "ktags": self.ktags,
-            "evalparam": self.evalparam
+            "evalparam": self.evalparam,
+            "othertagtypes": self.othertagtypes
         }
 
     @classmethod
@@ -330,6 +341,7 @@ class Supertagger(Model):
         model = cls(sequence_tagger, grammar)
         model.__ktags__ = state["ktags"]
         model.__evalparam__ = state["evalparam"]
+        model.othertagtypes = state["othertagtypes"]
         return model
 
 def float_or_zero(s):
@@ -338,3 +350,6 @@ def float_or_zero(s):
         return f if f == f else 0.0 # return 0 if f is NaN
     except:
         return 0.0
+
+def str_or_none(s: str):
+    return None if s == "None" else s

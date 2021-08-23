@@ -20,6 +20,7 @@ corpus = READERS[config.inputfmt](config.filename, encoding=config.inputenc, pun
 extract = SupertagExtractor(
     GuideFactory(config.guide),
     CompositionalNtConstructor(config.nonterminal_features.split()),
+    separate_attribs=config.separate_attribs.split(),
     headoutward=bool(config.headrules),
     horzmarkov=config.h, vertmarkov=config.v)
 
@@ -43,7 +44,8 @@ for i, (_, item) in enumerate(corpus.itertrees()):
     supertags = list(extract(item.tree, keep=("train" in subs)))
     for sub in subs:
         for word, tag in zip(item.sent, supertags):
-            print(f"{word} {tag.pos} {tag.str_tag()}", file=tagfiles[sub])
+            tag, *atts = tag
+            print(word, tag.str_tag(), *atts, file=tagfiles[sub])
         print(file=tagfiles[sub])
         print(item.tree, file=treefiles[sub])
 dump(SupertagGrammar(tuple(extract.supertags), tuple(extract.roots)), open(f"{config.filename}.grammar", "wb"))

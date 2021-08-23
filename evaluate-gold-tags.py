@@ -8,12 +8,14 @@ from sys import argv
 from pickle import load
 from configparser import ConfigParser
 from supertagging.data import SupertagParseDataset
+from supertagging.model import str_or_none
 
 config = ConfigParser()
 config.read(argv[1])
 
-config = { **config["Corpus"], **config["Eval-common"], **config["Eval-Development"] }
-data = SupertagParseDataset(f"{config['filename']}.train")
+config = { **config["Corpus"], **config["Eval-common"], **config["Eval-Development"], **config["Grammar"] }
+sep = tuple(config["separate_attribs"].split())
+data = SupertagParseDataset(f"{config['filename']}.train", sep)
 
 from discodop.tree import ParentedTree
 from discodop.eval import Evaluator, readparam
@@ -24,9 +26,10 @@ i = 0
 evaluator = Evaluator(readparam(config["evalfilename"]))
 for sentence in data:
     words = tuple(t.text for t in sentence)
-    poss = tuple(t.get_tag("pos").value for t in sentence)
+    poss = tuple(t.get_tag("pos").value for t in sentence) if "pos" in sep else None
+    constituents = tuple(str_or_none(t.get_tag("constituent").value) for t in sentence) if "constituent" in sep else None
     tags = tuple(((t.get_tag("supertag").value, 0.0),) for t in sentence)
-    parses = grammar.parse(tags, str_tag_mode=True)
+    parses = grammar.parse(tags, str_tag_mode=True, pos=poss, constituent=constituents)
     try:
         parse = next(parses)
     except StopIteration:

@@ -37,6 +37,16 @@ class SequenceMultiTagger(flair.nn.Model):
                 batch_first=True)
         self.to(flair.device)
 
+    @property
+    def types(self):
+        return self.type2dict.keys()
+
+    def get_tag(self, tagtype: str, tagidx: int):
+        return self.type2dict[tagtype].get_item_for_index(tagidx)
+
+    def get_idx(self, tagtype: str, tag: str):
+        return self.type2dict[tagtype].get_idx_for_item(tag)
+
     def predict(*args, **kwargs):
         raise NotImplementedError()
 
