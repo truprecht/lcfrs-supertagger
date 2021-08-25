@@ -4,7 +4,7 @@
 import flair
 import torch
 
-from supertagging.data import SupertagParseDataset, corpusparam
+from supertagging.data import SupertagCorpusFile, corpusparam
 from supertagging.model import Supertagger, EvalParameters
 
 import logging
@@ -28,16 +28,15 @@ ecdict = {**config["Eval-common"], **config["Eval-Test"]}
 for ov in (args.o or []):
     option, value = ov.split("=")
     ecdict[option.strip()] = value.strip()
-
-lc = corpusparam(**config["Corpus"], **config["Grammar"])
 ec = EvalParameters(**ecdict)
 
-model = Supertagger.load(args.model)
-model.set_eval_param(ec)
-model.eval()
-data = SupertagParseDataset(f"{lc.filename}.test")
-results, _ = model.evaluate(data, mini_batch_size=ec.batchsize,
-    only_disc=ec.only_disc, accuracy=ec.accuracy, return_loss=False, pos_accuracy=ec.pos_accuracy)
-print(results.log_header)
-print(results.log_line)
-print(results.detailed_results)
+lc = corpusparam(**config["Corpus"], **config["Grammar"])
+with SupertagCorpusFile(lc) as cf:
+    model = Supertagger.load(args.model)
+    model.set_eval_param(ec)
+    model.eval()
+    results, _ = model.evaluate(cf.corpus.test, mini_batch_size=ec.batchsize,
+        only_disc=ec.only_disc, accuracy=ec.accuracy, return_loss=False, othertag_accuracy=ec.othertag_accuracy)
+    print(results.log_header)
+    print(results.log_line)
+    print(results.detailed_results)

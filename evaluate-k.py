@@ -4,7 +4,7 @@
 import flair
 import torch
 
-from supertagging.data import SupertagParseDataset, corpusparam
+from supertagging.data import SupertagCorpusFile, corpusparam
 from supertagging.model import Supertagger, EvalParameters
 
 import logging
@@ -34,15 +34,15 @@ lc = corpusparam(**config["Corpus"], **config["Grammar"])
 
 model = Supertagger.load(args.model)
 model.eval()
-data = SupertagParseDataset(f"{lc.filename}.dev")
 
-for k in args.k:
-    print(f"running prediction for k = {k}")
-    ecdict["ktags"] = k
-    ep = EvalParameters(**ecdict)
-    model.set_eval_param(ep)
-    results, _ = model.evaluate(data, mini_batch_size=ep.batchsize, only_disc=ep.only_disc, accuracy="kbest", pos_accuracy=False, return_loss=False)
-    print(results.log_header)
-    print(results.log_line)
-    print(results.detailed_results)
-    print()
+with SupertagCorpusFile(lc) as cf:
+    for k in args.k:
+        print(f"running prediction for k = {k}")
+        ecdict["ktags"] = k
+        ep = EvalParameters(**ecdict)
+        model.set_eval_param(ep)
+        results, _ = model.evaluate(cf.corpus.dev, mini_batch_size=ep.batchsize, only_disc=ep.only_disc, accuracy="kbest", othertag_accuracy=False, return_loss=False)
+        print(results.log_header)
+        print(results.log_line)
+        print(results.detailed_results)
+        print()

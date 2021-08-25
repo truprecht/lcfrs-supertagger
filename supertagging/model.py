@@ -74,7 +74,7 @@ ModelParameters = Parameters.merge(
 EvalParameters = Parameters(
         ktags=(int, 5), fallbackprob=(float, 0.0),
         batchsize=(int, 1),
-        evalfilename=(str, None), only_disc=(str, "both"), accuracy=(str, "both"), pos_accuracy=(bool, True))
+        evalfilename=(str, None), only_disc=(str, "both"), accuracy=(str, "both"), othertag_accuracy=(bool, True))
 class Supertagger(Model):
     def __init__(self, sequence_tagger: SequenceMultiTagger, grammar: SupertagGrammar, othertagtypes: Tuple[str] = ()):
         super(Supertagger, self).__init__()

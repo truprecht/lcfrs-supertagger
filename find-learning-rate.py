@@ -3,42 +3,39 @@
     record the prediction loss vs gold supertags in the dev set.
 """
 
-from supertagging.data import corpusparam, SupertagParseCorpus
+from supertagging.data import corpusparam, SupertagCorpusFile
 from supertagging.model import Supertagger, ModelParameters, EvalParameters
 from supertagging.parameters import Parameters
 
 FindlrParameters = Parameters.merge(
-        Parameters(batchsize=(int, 1)),
+        Parameters(batchsize=(int, 1), optimizer=(str, "Adam")),
         ModelParameters, EvalParameters)
 def main(config, name, args):
     from flair.trainers import ModelTrainer
     from flair.visual.training_curves import Plotter
     from math import ceil
-    from torch.optim import Adam
-    from torch import manual_seed
     from pickle import load
-    from discodop.lexgrammar import SupertagGrammar
 
     cp = corpusparam(**config["Corpus"], **config["Grammar"])
-    corpus = SupertagParseCorpus(cp.filename)
-    grammar = load(open(f"{cp.filename}.grammar", "rb"))
-    tc = FindlrParameters(**config["Training"], **config["Eval-common"], **config["Eval-Development"], language=cp.language)
-    model = Supertagger.from_corpus(corpus, grammar, tc)
-    model.set_eval_param(tc)
+    with SupertagCorpusFile(cp) as cf:
+        tc = FindlrParameters(**config["Training"], **config["Eval-common"], **config["Eval-Development"], language=cp.language)
+        model = Supertagger.from_corpus(cf.corpus, cf.grammar, tc)
+        model.set_eval_param(tc)
 
-    if args.downsample:
-        corpus = corpus.downsample(args.downsample)
+        if args.downsample:
+            corpus = cf.corpus.downsample(args.downsample)
 
-    if args.iterations is None:
-        epoch = ceil(len(corpus.train)/tc.batchsize)
-        args.iterations = epoch * 5
+        if args.iterations is None:
+            epoch = ceil(len(cf.corpus.train)/tc.batchsize)
+            args.iterations = epoch * 5
 
-    trainer = ModelTrainer(model, corpus)
-    learning_rate_tsv = trainer.find_learning_rate(
-        name,
-        start_learning_rate=args.min_lr,
-        end_learning_rate=args.max_lr,
-        iterations=args.iterations)
+        trainer = ModelTrainer(model, cf.corpus)
+        learning_rate_tsv = trainer.find_learning_rate(
+            name,
+            start_learning_rate=args.min_lr,
+            end_learning_rate=args.max_lr,
+            iterations=args.iterations,
+            mini_batch_size=tc.batchsize)
     plotter = Plotter()
     plotter.plot_learning_rate(learning_rate_tsv)
 

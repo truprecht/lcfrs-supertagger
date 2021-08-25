@@ -1,7 +1,7 @@
 import flair
 import torch
 
-from supertagging.data import corpusparam, SupertagParseCorpus
+from supertagging.data import corpusparam, SupertagCorpusFile
 from supertagging.model import Supertagger, ModelParameters, EvalParameters
 from supertagging.parameters import Parameters
 
@@ -17,24 +17,22 @@ def main(config, name, random_seed):
     manual_seed(random_seed)
 
     cp = corpusparam(**config["Corpus"], **config["Grammar"])
-    corpus = SupertagParseCorpus(cp.filename, tuple(cp.separate_attribs.split()))
-    grammar = load(open(f"{cp.filename}.grammar", "rb"))
+    with SupertagCorpusFile(cp) as cf:
+        tc = TrainingParameters(**config["Training"], **config["Eval-common"], **config["Eval-Development"], language=cp.language)
+        model = Supertagger.from_corpus(cf.corpus, cf.grammar, tc)
+        model.set_eval_param(tc)
 
-    tc = TrainingParameters(**config["Training"], **config["Eval-common"], **config["Eval-Development"], language=cp.language)
-    model = Supertagger.from_corpus(corpus, grammar, tc)
-    model.set_eval_param(tc)
-
-    trainer = ModelTrainer(model, corpus, optimizer=getattr(torch.optim, tc.optimizer), use_tensorboard=True)
-    trainer.train(
-        name,
-        learning_rate=tc.lr,
-        mini_batch_size=tc.batchsize,
-        max_epochs=tc.epochs,
-        checkpoint=True,
-        min_learning_rate=tc.min_lr,
-        weight_decay=tc.weight_decay,
-        patience=tc.patience,
-        anneal_factor=tc.lr_decay)
+        trainer = ModelTrainer(model, cf.corpus, optimizer=getattr(torch.optim, tc.optimizer), use_tensorboard=True)
+        trainer.train(
+            name,
+            learning_rate=tc.lr,
+            mini_batch_size=tc.batchsize,
+            max_epochs=tc.epochs,
+            checkpoint=True,
+            min_learning_rate=tc.min_lr,
+            weight_decay=tc.weight_decay,
+            patience=tc.patience,
+            anneal_factor=tc.lr_decay)
 
 if __name__ == "__main__":
     from argparse import ArgumentParser
