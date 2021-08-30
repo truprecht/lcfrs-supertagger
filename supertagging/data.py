@@ -11,7 +11,10 @@ from discodop.treebank import READERS
 from discodop.supertags.extraction import SupertagExtractor, GuideFactory, CompositionalNtConstructor
 from discodop.supertags import SupertagGrammar
 
+from tqdm import tqdm
+
 from .parameters import Parameters
+from .split import SplitFactory
 
 
 corpusparam = Parameters(
@@ -48,7 +51,7 @@ class SupertagParseCorpus(ColumnCorpus):
                     self.__getattribute__(s)[idx].add_label("tree", tree)
 
     @classmethod
-    def extract_into(cls, dir: str, config: corpusparam):
+    def extract_into(cls, dir: str, config: corpusparam, show_progress: bool = True):
         corpus = READERS[config.inputfmt](config.filename, encoding=config.inputenc, punct="move", headrules=config.headrules or None)
         extract = SupertagExtractor(
             GuideFactory(config.guide),
@@ -57,29 +60,20 @@ class SupertagParseCorpus(ColumnCorpus):
             headoutward=config.head_outward,
             horzmarkov=config.h, vertmarkov=config.v)
 
-        portions = config.split.split()
-        names = "train dev test".split()
-        assert len(portions) in [3,4]
+        split = SplitFactory().produce(config.split)
 
-        if portions[0] == "debug":
-            portions = tuple(int(portion) for portion in portions[1:2]+portions[1:])
-            limits = tuple((name, slice(0, end)) for name, end in zip(names, portions))
-        else:
-            portions = tuple(int(portion) for portion in portions)
-            limits = tuple(reduce(lambda xs, y: xs + (xs[-1]+y,), portions, (0,)))
-            limits = tuple((name, slice(start, end)) for (name, start, end) in zip(names, limits[-4:-1], limits[-3:]))
-
-        tagfiles = { name: open(f"{dir}/{name}-tags", "w") for name, _ in limits }
-        treefiles = { name: open(f"{dir}/{name}-trees", "w") for name, _ in limits }
-        for i, (_, item) in enumerate(corpus.itertrees()):
-            subs = [name for name, s in limits if s.start <= i < s.stop]
-            supertags = list(extract(item.tree, keep=("train" in subs)))
-            for sub in subs:
-                for word, tag in zip(item.sent, supertags):
-                    tag, *atts = tag
-                    print(word, tag.str_tag(), *atts, file=tagfiles[sub])
-                print(file=tagfiles[sub])
-                print(item.tree, file=treefiles[sub])
+        tagfiles = { name: open(f"{dir}/{name}-tags", "w") for name in split.names() }
+        treefiles = { name: open(f"{dir}/{name}-trees", "w") for name in split.names() }
+        item_iterator = split.iter_items((item for _, item in corpus.itertrees()))
+        if show_progress:
+            item_iterator = tqdm(item_iterator, desc="Extracting supertag corpus", total=len(split))
+        for name, item in item_iterator:
+            supertags = list(extract(item.tree, keep=(name == "train")))
+            for word, tag in zip(item.sent, supertags):
+                tag, *atts = tag
+                print(word, tag.str_tag(), *atts, file=tagfiles[name])
+            print(file=tagfiles[name])
+            print(item.tree, file=treefiles[name])
         dump(SupertagGrammar(tuple(extract.supertags), tuple(extract.roots)), open(f"{dir}/grammar", "wb"))
 
         for file in tagfiles.values():
