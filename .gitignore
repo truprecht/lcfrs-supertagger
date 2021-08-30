@@ -1,5 +1,7 @@
 __pycache__
 .vector_cache
+.corpus-cache
+.vscode
 runs
 *.corpus
 *.grammar
