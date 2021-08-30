@@ -7,11 +7,13 @@
 from sys import argv
 from pickle import load
 from configparser import ConfigParser
-from supertagging.data import SupertagCorpusFile, corpusparam
-from supertagging.model import str_or_none
 
 from discodop.tree import ParentedTree
 from discodop.eval import Evaluator, readparam
+from tqdm import tqdm
+
+from supertagging.data import SupertagCorpusFile, corpusparam
+from supertagging.model import str_or_none
 
 config = ConfigParser()
 config.read(argv[1])
@@ -21,10 +23,9 @@ sep = tuple(config["separate_attribs"].split())
 
 with SupertagCorpusFile(corpusparam(**config)) as cp:
     data = cp.corpus.train
-    print("using", len(cp.grammar.tags), "supertags")
     i = 0
     evaluator = Evaluator(readparam(config["evalfilename"]))
-    for sentence in data:
+    for sentence in tqdm(data, desc="Parsing gold tags"):
         words = tuple(t.text for t in sentence)
         poss = tuple(t.get_tag("pos").value for t in sentence) if "pos" in sep else None
         constituents = tuple(str_or_none(t.get_tag("constituent").value) for t in sentence) if "constituent" in sep else None
