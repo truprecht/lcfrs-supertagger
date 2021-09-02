@@ -1,4 +1,6 @@
+from __future__ import annotations
 from collections import namedtuple
+from typing import Iterable, Tuple, Type, Any, Set
 from warnings import warn
 
 class MissingParameterWarning(Warning):
@@ -10,16 +12,19 @@ class MissingRequiredParameter(Exception):
         super(MissingRequiredParameter, self).__init__(f"Missing parameter(s): {', '.join(mplist)}.")
 
 class Parameters:
-    def __init__(self, **params):
+    def __init__(self, **params: Tuple[Type, Any]):
         for _, (ptype, defvalue) in params.items():
             assert type(ptype) is type
             assert type(defvalue) is ptype or defvalue is None
         self._params = params
         self._param_t = namedtuple(f"Parameters", " ".join(params.keys()))
 
+    def keys(self) -> Set[str]:
+        return set(self._params.keys())
+
     @classmethod
-    def merge(cls, param1, param2, *params):
-        p = { **param1._params, **param2._params }
+    def merge(cls, param1: Parameters, *params: Parameters) -> Parameters:
+        p = { **param1._params }
         for paramx in params:
             p = { **p, **paramx._params }
         return cls(**p)
@@ -28,7 +33,7 @@ class Parameters:
         defvalues = (v for _, v in self._params.values())
         return self._param_t(*defvalues)
 
-    def __call__(self, **kv):
+    def __call__(self, **kv: Any):
         unknown_params = [param for param in kv if not param in self._params]
         if unknown_params:
             warn(
