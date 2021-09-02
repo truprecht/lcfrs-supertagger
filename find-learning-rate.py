@@ -22,14 +22,13 @@ def main(config, name, args):
         model = Supertagger.from_corpus(cf.corpus, cf.grammar, tc)
         model.set_eval_param(tc)
 
-        if args.downsample:
-            corpus = cf.corpus.downsample(args.downsample)
+        corpus = cf.corpus.downsample(args.downsample) if args.downsample else cf.corpus
 
         if args.iterations is None:
-            epoch = ceil(len(cf.corpus.train)/tc.batchsize)
+            epoch = ceil(len(corpus)/tc.batchsize)
             args.iterations = epoch * 5
 
-        trainer = ModelTrainer(model, cf.corpus)
+        trainer = ModelTrainer(model, corpus)
         learning_rate_tsv = trainer.find_learning_rate(
             name,
             start_learning_rate=args.min_lr,
