@@ -2,13 +2,14 @@ import flair
 import torch
 
 from supertagging.data import corpusparam, SupertagCorpusFile
-from supertagging.model import Supertagger, ModelParameters, EvalParameters
+from supertagging.model import EvalParameters
 from supertagging.parameters import Parameters
+from supertagging.tagging.tagger_model import DecoderModel, DecoderModelParameters
 
 TrainingParameters = Parameters.merge(
         Parameters(epochs=(int, 1), lr=(float, 0.01), batchsize=(int, 1), weight_decay=(float, 0.01),
         patience=(int, 1), lr_decay=(float, 0.5), min_lr=(float, 0.0), optimizer=(str, "Adam")),
-        ModelParameters, EvalParameters)
+        DecoderModelParameters, EvalParameters)
 def main(config, name, random_seed):
     from flair.trainers import ModelTrainer
     from torch import manual_seed
@@ -19,7 +20,7 @@ def main(config, name, random_seed):
     cp = corpusparam(**config["Corpus"], **config["Grammar"])
     with SupertagCorpusFile(cp) as cf:
         tc = TrainingParameters(**config["Training"], **config["Eval-common"], **config["Eval-Development"], language=cp.language)
-        model = Supertagger.from_corpus(cf.corpus, cf.grammar, tc)
+        model = DecoderModel.from_corpus(cf.corpus, cf.grammar, tc)
         model.set_eval_param(tc)
 
         trainer = ModelTrainer(model, cf.corpus, optimizer=getattr(torch.optim, tc.optimizer), use_tensorboard=True)

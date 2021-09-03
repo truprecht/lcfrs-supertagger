@@ -1,92 +1,84 @@
-from typing import Tuple, Union, List
-
-from flair.data import Dictionary, Label, Sentence
-from flair.nn import Model
-from flair.training_utils import Result
-
 import torch
+import flair
 
+from typing import Tuple
+
+from discodop.eval import readparam
 from discodop.supertags import SupertagGrammar
-from discodop.eval import Evaluator, readparam
-from discodop.tree import Tree
 
-from .data import SupertagParseDataset, SupertagParseCorpus
-from .parameters import Parameters
-from .sequence_multi_tagger import SequenceMultiTagger
+from ..data import SupertagParseDataset, SupertagParseCorpus
+from ..model import ModelParameters, EmbeddingFactory, EvalParameters, noparse, float_or_zero, str_or_none
+from .decoder import LmDecoder
+from .encoder import BilstmEncoder
+from ..parameters import Parameters
 
+DecoderModelParameters = Parameters.merge(ModelParameters,
+    Parameters(decoder_hidden_dim=(int, 100), decoder_embedding_dim=(int, 100), sample_gold_tags=(float, 0.0)))
+class DecoderModel(flair.nn.Model):
+    @classmethod
+    def from_corpus(cls, corpus: SupertagParseCorpus, grammar: SupertagGrammar, parameters: DecoderModelParameters):
+        """ Construct an instance of the model using
+            * supertags and pos tags from `grammar`, and
+            * word embeddings (as specified in `parameters`) from `corpus`.
+        """
+        tag_dicts = { k: flair.data.Dictionary(add_unk=False) for k in ("supertag",) + corpus.separate_attribs }
+        for str_tag in grammar.str_tags:
+            tag_dicts["supertag"].add_item(str_tag)
+        for sentence in corpus.train:
+            for token in sentence:
+                for k in corpus.separate_attribs:
+                    tag_dicts[k].add_item(token.get_tag(k).value)
 
-def pretrainedstr(model, language):
-    if model != "bert-base":
-        return model
-    # translate two letter language code into bert model
-    return {
-        "de": "bert-base-german-cased",
-        "en": "bert-base-cased",
-        "nl": "wietsedv/bert-base-dutch-cased"
-    }[language]
+        kwargs = [ "decoder_embedding_dim", "decoder_hidden_dim", "dropout", "word_dropout", "locked_dropout", "lstm_dropout", "sample_gold_tags" ]
+        kwargs = { kw: parameters.__getattribute__(kw) for kw in kwargs }
 
+        return DecoderModel(EmbeddingFactory(parameters, corpus), tag_dicts, grammar,
+            encoder_layers=parameters.lstm_layers, encoder_hidden_dim=parameters.lstm_size,
+            **kwargs)
 
-EmbeddingParameters = Parameters(
-    embedding=(str, "word char"), tune_embedding=(bool, False), language=(str, ""),
-    pos_embedding_dim=(int, 20),
-    word_embedding_dim=(int, 300), word_minfreq=(int, 1),
-    char_embedding_dim=(int, 64), char_bilstm_dim=(int, 100))
-def EmbeddingFactory(parameters, corpus):
-    from flair.embeddings import FlairEmbeddings, StackedEmbeddings, \
-        WordEmbeddings, OneHotEmbeddings, CharacterEmbeddings, TransformerWordEmbeddings
+    def __init__(self, embedding, tag_dicts, grammar, encoder_layers=1, encoder_hidden_dim=100, decoder_hidden_dim=100, decoder_embedding_dim=100, dropout=0.0, word_dropout=0.0, locked_dropout=0.0, lstm_dropout=0.0, sample_gold_tags = 0.0):
+        super(DecoderModel, self).__init__()
 
-    stack = []
-    for emb in parameters.embedding.split():
-        if any((spec in emb) for spec in ("bert", "gpt", "xlnet")):
-            stack.append(TransformerWordEmbeddings(
-                model=pretrainedstr(emb, parameters.language),
-                fine_tune=parameters.tune_embedding))
-        elif emb == "flair":
-            stack += [
-                FlairEmbeddings(f"{parameters.language}-forward", fine_tune=parameters.tune_embedding),
-                FlairEmbeddings(f"{parameters.language}-backward", fine_tune=parameters.tune_embedding)]
-        elif emb == "pos":
-            stack.append(OneHotEmbeddings(
-                corpus,
-                field="pos",
-                embedding_length=parameters.pos_embedding_dim,
-                min_freq=1))
-        elif emb == "fasttext":
-            stack.append(WordEmbeddings(parameters.language))
-        elif emb == "word":
-            stack.append(OneHotEmbeddings(
-                corpus,
-                field="text",
-                embedding_length=parameters.word_embedding_dim,
-                min_freq=parameters.word_minfreq))
-        elif emb == "char":
-            stack.append(CharacterEmbeddings(
-                char_embedding_dim=parameters.char_embedding_dim,
-                hidden_size_char=parameters.char_bilstm_dim))
-        else:
-            raise NotImplementedError()
-    return StackedEmbeddings(stack)
+        self.sample_gold_tags = sample_gold_tags
 
-ModelParameters = Parameters.merge(
-        Parameters(
-            dropout=(float, 0.0), word_dropout=(float, 0.0), locked_dropout=(float, 0.0), lstm_dropout=(float, -1.0),
-            lstm_layers=(int, 1), lstm_size=(int, 100)),
-        EmbeddingParameters)
-EvalParameters = Parameters(
-        ktags=(int, 5), fallbackprob=(float, 0.0),
-        batchsize=(int, 1),
-        evalfilename=(str, None), only_disc=(str, "both"), accuracy=(str, "both"), othertag_accuracy=(bool, True))
-class Supertagger(Model):
-    def __init__(self, sequence_tagger: SequenceMultiTagger, grammar: SupertagGrammar, othertagtypes: Tuple[str] = ()):
-        super(Supertagger, self).__init__()
-        self.sequence_tagger = sequence_tagger
+        self.embedding = embedding
+        self.encoder_layers = encoder_layers
+        self.encoder_hidden_dim = encoder_hidden_dim
+        self.decoder_hidden_dim = decoder_hidden_dim
+        self.decoder_embedding_dim = decoder_embedding_dim
+
+        self.dropout = dropout
+        self.word_dropout = word_dropout
+        self.locked_dropout = locked_dropout
+        self.lstm_dropout = lstm_dropout
+        
+        dropout_layers = []
+        if dropout > 0.0:
+            dropout_layers.append(torch.nn.Dropout(dropout))
+        if word_dropout > 0.0:
+            dropout_layers.append(flair.nn.WordDropout(word_dropout))
+        if locked_dropout > 0.0:
+            dropout_layers.append(flair.nn.LockedDropout(locked_dropout))
+        self.dropout_layers = torch.nn.Sequential(*dropout_layers)
+
+        self.dictionaries = tag_dicts
+        inputlen = embedding.embedding_length
+
+        self.encoder = BilstmEncoder(inputlen, encoder_hidden_dim, layers=encoder_layers, dropout=lstm_dropout)
+        self.decoder = LmDecoder(self.encoder.output_dim, len(tag_dicts["supertag"]), decoder_embedding_dim, decoder_hidden_dim)
+        self.othertaggers = torch.nn.ModuleDict({
+            name: torch.nn.Linear(self.encoder.output_dim, len(dictionary))
+            for name, dictionary in self.dictionaries.items()
+            if name != "supertag"
+        })
+
         self.__grammar__ = grammar
         self.__evalparam__ = None
         self.__ktags__ = 1
-        self.othertagtypes = othertagtypes
+
+        self.to(flair.device)
 
     def set_eval_param(self, config: EvalParameters):
-        self.__grammar__.fallback_prob = config.fallbackprob
         self.__evalparam__ = readparam(config.evalfilename)
         self.__ktags__ = config.ktags
 
@@ -98,47 +90,62 @@ class Supertagger(Model):
     def ktags(self):
         return self.__ktags__
 
-    @classmethod
-    def from_corpus(cls, corpus: SupertagParseCorpus, grammar: SupertagGrammar, parameters: ModelParameters):
-        """ Construct an instance of the model using
-            * supertags and pos tags from `grammar`, and
-            * word embeddings (as specified in `parameters`) from `corpus`.
-        """
-        tag_dicts = { k: Dictionary(add_unk=False) for k in ("supertag",) + corpus.separate_attribs }
-        for str_tag in grammar.str_tags:
-            tag_dicts["supertag"].add_item(str_tag)
-        for sentence in corpus.train:
-            for token in sentence:
-                for k in corpus.separate_attribs:
-                    tag_dicts[k].add_item(token.get_tag(k).value)
+    def _batch_to_embeddings(self, batch):
+        if not type(batch) is list:
+            batch = [batch]
+        self.embedding.embed(batch)
+        embedding_name = self.embedding.get_names()
+        input = torch.nn.utils.rnn.pad_sequence([
+            torch.stack([ word.get_embedding(embedding_name) for word in sentence ])
+            for sentence in batch]).to(flair.device)
+        return input
 
-        rnn_droupout = parameters.lstm_dropout
-        if rnn_droupout < 0:
-            rnn_droupout = parameters.dropout
 
-        sequence_tagger = SequenceMultiTagger(
-            parameters.lstm_size,
-            EmbeddingFactory(parameters, corpus),
-            tag_dicts.values(),
-            tag_dicts.keys(),
-            use_rnn=(parameters.lstm_layers > 0),
-            rnn_layers=parameters.lstm_layers,
-            dropout=parameters.dropout,
-            word_dropout=parameters.word_dropout,
-            locked_dropout=parameters.locked_dropout,
-            lstm_dropout=rnn_droupout,
-            reproject_embeddings=False
-        )
+    def _batch_to_gold(self, batch, batch_first=False, padding_value=-100):
+        if not type(batch) is list:
+            batch = [batch]
 
-        return cls(sequence_tagger, grammar, othertagtypes = tuple(corpus.separate_attribs))
+        for tagname, tagdict in self.dictionaries.items():
+            mat = torch.nn.utils.rnn.pad_sequence([
+                torch.tensor([ tagdict.get_idx_for_item(word.get_tag(tagname).value) for word in sentence ])
+                for sentence in batch], padding_value=padding_value).to(flair.device)
+            if batch_first:
+                mat = mat.transpose(0,1)
+            yield tagname, mat
 
-    def forward_loss(self, data_points):
-        return self.sequence_tagger.forward_loss(data_points)
 
-    def forward(self, data_points):
-        return self.sequence_tagger.forward(data_points)
+    def _calculate_loss(self, feats, batch, batch_first=False):
+        loss = torch.tensor(0.0, device=flair.device)
+        feats = dict(feats)
+        for tagname, golds in self._batch_to_gold(batch, batch_first):
+            loss += torch.nn.functional.cross_entropy(feats[tagname].flatten(end_dim=1), golds.flatten(end_dim=1), reduction="sum", ignore_index=-100)
+        n_predictions = sum(len(sentence) for sentence in batch)
+        return loss, n_predictions
 
-    def predict(self, batch: List[Sentence],
+
+    def forward_loss(self, batch):
+        if self.sample_gold_tags > 0.0:
+            stags = next(tensor for name, tensor in self._batch_to_gold(batch, padding_value=0) if name == "supertag")
+        else:
+            stags = None
+        feats = self.forward(batch, gold_outputs=stags)
+        loss, denom = self._calculate_loss(feats, batch)
+        return loss / denom
+
+
+    def forward(self, batch, batch_first=False, gold_outputs=None):
+        inputfeats = self._batch_to_embeddings(batch)
+        inputfeats = self.dropout_layers(inputfeats)
+        inputfeats = self.encoder(inputfeats)
+        inputfeats = self.dropout_layers(inputfeats)
+        stagfeats = self.decoder(inputfeats, gold_outputs=gold_outputs, gold_sampling_prob=self.sample_gold_tags if not gold_outputs is None else 0.0)
+        yield "supertag", stagfeats if not batch_first else stagfeats.transpose(0,1)
+        for name, decoder in self.othertaggers.items():
+            feats = decoder(inputfeats)
+            yield name, feats if not batch_first else feats.transpose(0,1)
+
+
+    def predict(self, batch,
             label_name: str = None,
             return_loss: bool = False,
             embedding_storage_mode: str = "none",
@@ -169,33 +176,35 @@ class Supertagger(Model):
             label_name = "predicted"
         get_label_name = lambda x: f"{label_name}-{x}"
 
-
         with torch.no_grad():
-            scores = dict(self.sequence_tagger.forward(batch))
+            scores = dict(self.forward(batch, batch_first=True))
             tagscores = scores["supertag"].cpu()
             tags = argpartition(-tagscores, self.ktags, axis=2)[:, :, 0:self.ktags]
             neglogprobs = -tagscores.gather(2, tags).log_softmax(dim=2)
             othertags = (
                 {
-                    k: [str_or_none(self.sequence_tagger.get_tag(k, idx)) for idx in scores[k][sentidx, :len(sent)].argmax(dim=-1)]
-                    for k in self.othertagtypes
+                    name: [
+                        str_or_none(self.dictionaries[name].get_item_for_index(idx))
+                        for idx in tscores[sentidx, :len(sent)].argmax(dim=-1)]
+                    for name, tscores in scores.items() if name != "supertag"
                 } for sentidx, sent in enumerate(batch) )
 
             for sentence, senttags, sentweights, othertag in zip(batch, tags, neglogprobs, othertags):
                 # store tags in tokens
                 if supertag_storage_mode in ("both", "kbest", "best"):
                     for token, ktags, kweights in zip(sentence, senttags, sentweights):
-                        ktags = tuple(self.sequence_tagger.type2dict["supertag"].get_item_for_index(t) for t in ktags)
+                        ktags = tuple(self.dictionaries["supertag"].get_item_for_index(t) for t in ktags)
                         kweights = (-kweights).exp()
                         if supertag_storage_mode in ("both", "kbest"):
-                            token.add_tags_proba_dist(get_label_name("supertag"), [Label(t, w.item()) for t, w in zip(ktags, kweights)])
+                            token.add_tags_proba_dist(get_label_name("supertag"), [flair.data.Label(t, w.item()) for t, w in zip(ktags, kweights)])
                         if supertag_storage_mode in ("both", "best"):
                             best_tag = kweights.argmax()
-                            token.add_tag_label(get_label_name("supertag"), Label(ktags[best_tag], kweights[best_tag].item()))
+                            token.add_tag_label(get_label_name("supertag"), flair.data.Label(ktags[best_tag], kweights[best_tag].item()))
                 if othertag_storage_mode:
-                    for tagt in self.othertagtypes:
+                    for tagt in self.dictionaries:
+                        if tagt == "supertag": continue
                         for token, tagstr in zip(sentence, othertag[tagt]):
-                            token.add_tag_label(get_label_name(tagt), Label(str(tagstr)))
+                            token.add_tag_label(get_label_name(tagt), flair.data.Label(str(tagstr)))
 
                 # parse sentence and store parse tree in sentence
                 sentweights = sentweights[:len(sentence)]
@@ -215,7 +224,7 @@ class Supertagger(Model):
                 sentence.set_label(label_name, parse)
             store_embeddings(batch, storage_mode=embedding_storage_mode)
             if return_loss:
-                return self.sequence_tagger._calculate_loss(scores.items(), batch)
+                return self._calculate_loss(scores.items(), batch, batch_first=True)
 
     def evaluate(self,
             sentences: SupertagParseDataset,
@@ -226,7 +235,7 @@ class Supertagger(Model):
             only_disc: str = "both",
             accuracy: str = "both",
             othertag_accuracy: bool = True,
-            return_loss: bool = True) -> Tuple[Result, float]:
+            return_loss: bool = True) -> Tuple[flair.training_utils.Result, float]:
         """ Predicts supertags, pos tags and parse trees, and reports the
             predictions scores for a set of sentences.
             :param sentences: a ``DataSet`` of sentences. For each sentence
@@ -247,6 +256,7 @@ class Supertagger(Model):
         """
         from flair.datasets import DataLoader
         from discodop.tree import ParentedTree, Tree
+        from discodop.treetransforms import unbinarize, removefanoutmarkers
         from discodop.eval import Evaluator, readparam
         from timeit import default_timer
         from collections import Counter
@@ -267,7 +277,9 @@ class Supertagger(Model):
 
         # predict supertags and parse trees
         eval_loss = 0
+        n_predictions = 0
         start_time = default_timer()
+
         for batch in data_loader:
             loss = self.predict(batch,
                     embedding_storage_mode=embedding_storage_mode,
@@ -275,11 +287,14 @@ class Supertagger(Model):
                     othertag_storage_mode=othertag_accuracy,
                     label_name='predicted',
                     return_loss=return_loss)
-            eval_loss += loss if return_loss else 0
+            if return_loss:
+                eval_loss += loss[0]
+                n_predictions += loss[1]
         end_time = default_timer()
+        if return_loss:
+            eval_loss /= n_predictions
 
         i = 0
-        batches = 0
         noparses = 0
         acc_ctr = Counter()
         for batch in data_loader:
@@ -292,7 +307,8 @@ class Supertagger(Model):
                             token.get_tag('predicted-supertag').value:
                         acc_ctr["best"] += 1
                     if othertag_accuracy:
-                        for tagt in self.othertagtypes:
+                        for tagt in self.dictionaries:
+                            if tagt == "supertag": continue
                             acc_ctr[tagt] += int(token.get_tag(tagt).value == token.get_tag(f"predicted-{tagt}").value)
                 acc_ctr["all"] += len(sentence)
                 sent = [token.text for token in sentence]
@@ -304,7 +320,6 @@ class Supertagger(Model):
                 for evaluator in evaluators.values():
                     evaluator.add(i, gold.copy(deep=True), list(sent), parse.copy(deep=True), list(sent))
                 i += 1
-            batches += 1
         scores = {
             strmode: float_or_zero(evaluator.acc.scores()['lf'])
             for strmode, evaluator in evaluators.items()}
@@ -313,55 +328,45 @@ class Supertagger(Model):
         if accuracy in ("both", "best"):
             scores["accuracy-best"] = acc_ctr["best"] / acc_ctr["all"]
         if othertag_accuracy:
-            for tagt in self.othertagtypes:
+            for tagt in self.dictionaries:
+                if tagt == "supertag": continue
                 scores[f"accuracy-{tagt}"] = acc_ctr[tagt] / acc_ctr["all"]
         scores["coverage"] = 1-(noparses/i)
         scores["time"] = end_time - start_time
         return (
-            Result(
+            flair.training_utils.Result(
                 scores['F1-all'] if 'F1-all' in scores else scores['F1-disc'],
                 "\t".join(f"{mode}" for mode in scores),
                 "\t".join(f"{s}" for s in scores.values()),
                 '\n\n'.join(evaluator.summary() for evaluator in evaluators.values())),
-            eval_loss / batches
+            eval_loss
         )
 
     def _get_state_dict(self):
         return {
-            "sequence_tagger": self.sequence_tagger._get_state_dict(),
-            "grammar": self.__grammar__.__getstate__(),
+            "state_dict": self.state_dict(),
+            "embedding": self.embedding,
+            "decoder_embedding_dim": self.decoder_embedding_dim,
+            "decoder_hidden_dim": self.decoder_hidden_dim,
+            "encoder_layers": self.encoder_layers,
+            "encoder_hidden_dim": self.encoder_hidden_dim,
+            "dropout": self.dropout,
+            "locked_dropout": self.locked_dropout,
+            "word_dropout": self.word_dropout,
+            "lstm_dropout": self.lstm_dropout,
+            "tags": self.dictionaries,
             "ktags": self.ktags,
             "evalparam": self.evalparam,
-            "othertagtypes": self.othertagtypes
+            "sample_gold_tags": self.sample_gold_tags,
+            "grammar": self.__grammar__.__getstate__()
         }
 
     @classmethod
     def _init_model_with_state_dict(cls, state):
-        sequence_tagger = SequenceMultiTagger._init_model_with_state_dict(state["sequence_tagger"])
-        grammar = SupertagGrammar(state["grammar"]["tags"], state["grammar"]["roots"])
-        model = cls(sequence_tagger, grammar)
+        args = state["embedding"], state["tags"], SupertagGrammar(state["grammar"]["tags"], state["grammar"]["roots"])
+        kwargs = { kw: state[kw] for kw in ("encoder_hidden_dim", "encoder_layers", "decoder_hidden_dim", "decoder_embedding_dim", "dropout", "word_dropout", "locked_dropout", "lstm_dropout", "sample_gold_tags") }
+        model = cls(*args, **kwargs)
         model.__ktags__ = state["ktags"]
         model.__evalparam__ = state["evalparam"]
-        model.othertagtypes = state["othertagtypes"]
+        model.load_state_dict(state["state_dict"])
         return model
-
-def float_or_zero(s):
-    try:
-        f = float(s)
-        return f if f == f else 0.0 # return 0 if f is NaN
-    except:
-        return 0.0
-
-def str_or_none(s: str):
-    return None if s == "None" else s
-
-def noparse(partial: Tree, postags: list) -> Tree:
-    if partial is None:
-        return Tree("NOPARSE", [Tree(pt, [i]) for i, pt in enumerate(postags)])
-    missing = set(range(len(postags))) - set(partial.leaves())
-    if not missing:
-        return partial
-    return Tree(
-        "NOPARSE",
-        [partial] + [ Tree(postags[i], [i]) for i in missing ]
-    )
