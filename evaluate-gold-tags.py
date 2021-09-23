@@ -23,6 +23,7 @@ sep = tuple(config["separate_attribs"].split())
 
 with SupertagCorpusFile(corpusparam(**config)) as cp:
     data = cp.corpus.train
+    cp.grammar.fallback_prob = 0.0
     i = 0
     evaluator = Evaluator(readparam(config["evalfilename"]))
     for sentence in tqdm(data, desc="Parsing gold tags"):
