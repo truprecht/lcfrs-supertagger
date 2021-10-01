@@ -1,6 +1,18 @@
+from enum import IntEnum
+
 import torch as t
 import flair
 import numpy as np
+
+
+class FfDecoder(t.nn.Module):
+    def __init__(self, input_len: int, n_outputs: int, *args, **kwargs):
+        super(FfDecoder, self).__init__()
+        self.ff = t.nn.Linear(input_len, n_outputs)
+        self._n_outputs = n_outputs
+
+    def forward(self, feats, *args, **kwargs):
+        return self.ff(feats)
 
 
 class LstmDecoder(t.nn.Module):
@@ -30,7 +42,7 @@ class LstmDecoder(t.nn.Module):
             elif gold_sampling_prob == 1.0:
                 preds = gold_outputs[i]
             else:
-                preds = t.where(t.rand(batchlen) < gold_sampling_prob, gold_outputs[i], scores.argmax(dim=1))
+                preds = t.where((t.rand(batchlen) < gold_sampling_prob).to(flair.device), gold_outputs[i], scores.argmax(dim=1))
             scorelist.append(scores)
         return t.stack(scorelist)
 
@@ -38,22 +50,18 @@ class LstmDecoder(t.nn.Module):
 class LmDecoder(t.nn.Module):
     def __init__(self, input_dim: int, output_dim: int, language_model_embedding_dim: int, language_model_hidden_dim: int):
         super(LmDecoder, self).__init__()
-        self.use_language_model = language_model_hidden_dim > 0 and language_model_embedding_dim > 0
-        assert self.use_language_model or language_model_hidden_dim == 0 and language_model_embedding_dim == 0
-        if self.use_language_model:
-            self.language_model_embedding = t.nn.Embedding(output_dim+1, language_model_embedding_dim)
-            self.language_model = t.nn.LSTMCell(language_model_embedding_dim, language_model_hidden_dim)
-            combiner_input_dim = input_dim+language_model_hidden_dim
-        else:
-            combiner_input_dim = input_dim
+        assert language_model_hidden_dim > 0 and language_model_embedding_dim > 0
+        
+        self.language_model_embedding = t.nn.Embedding(output_dim+1, language_model_embedding_dim)
+        self.language_model = t.nn.LSTMCell(language_model_embedding_dim, language_model_hidden_dim)
 
         combiner_dim = max(input_dim, language_model_hidden_dim)
         self.combiner = t.nn.Sequential(
-            t.nn.Linear(combiner_input_dim, combiner_dim, bias=False),
+            t.nn.Linear(input_dim+language_model_hidden_dim, combiner_dim, bias=False),
             t.nn.ReLU()
         )
 
-        self.ff = t.nn.Linear(input_dim if not self.use_language_model else combiner_dim, output_dim)
+        self.ff = t.nn.Linear(combiner_dim, output_dim)
         self._n_outputs = output_dim
 
 
@@ -64,9 +72,6 @@ class LmDecoder(t.nn.Module):
 
 
     def forward(self, input: t.tensor, gold_outputs: t.tensor = None, gold_sampling_prob: float = 0.0):
-        if not self.use_language_model:
-            return self.ff(self.combiner(input))
-
         batchlen = input.size(1)
         state = None
         preds = t.tensor([self._n_outputs]*batchlen, device=flair.device)
@@ -79,7 +84,7 @@ class LmDecoder(t.nn.Module):
             elif gold_sampling_prob == 1.0:
                 preds = gold_outputs[i]
             else:
-                preds = t.where(t.rand(batchlen) < gold_sampling_prob, gold_outputs[i], scores.argmax(dim=1))
+                preds = t.where((t.rand(batchlen) < gold_sampling_prob).to(flair.device), gold_outputs[i], scores.argmax(dim=1))
             scorelist.append(scores)
         return t.stack(scorelist)
 
