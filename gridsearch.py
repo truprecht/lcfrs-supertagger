@@ -39,7 +39,7 @@ def grid_training(basename, base_config, grid_point: Dict[str, str], gpu_queue: 
         conf[section][key] = val
 
     gpstr = "-".join(f"{key}={val}" for key, val in grid_point.items())
-    main(conf, f"{basename}/{gpstr}", seed)
+    main(conf, f"{basename}/{gpstr}", seed, param_selection_mode=True)
 
     gpu_queue.put(device)
 

@@ -10,7 +10,7 @@ TrainingParameters = Parameters.merge(
         Parameters(epochs=(int, 1), lr=(float, 0.01), batchsize=(int, 1), weight_decay=(float, 0.01),
         patience=(int, 1), lr_decay=(float, 0.5), min_lr=(float, 0.0), optimizer=(str, "Adam")),
         DecoderModelParameters, EvalParameters)
-def main(config, name, random_seed):
+def main(config, name, random_seed, param_selection_mode: bool = False):
     from flair.trainers import ModelTrainer
     from torch import manual_seed
     from pickle import load
@@ -33,7 +33,8 @@ def main(config, name, random_seed):
             min_learning_rate=tc.min_lr,
             weight_decay=tc.weight_decay,
             patience=tc.patience,
-            anneal_factor=tc.lr_decay)
+            anneal_factor=tc.lr_decay,
+            param_selection_mode=param_selection_mode)
 
 if __name__ == "__main__":
     from argparse import ArgumentParser
