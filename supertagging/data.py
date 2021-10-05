@@ -94,10 +94,17 @@ class SupertagCorpusFile(AbstractContextManager):
         return f"{self.param.cachedir}/{basename}.{splitstr}.{binstr}.{self.param.guide}.{ntstr}.{attribs}"
 
 
+    def check_parameters(self):
+        if self.param.guide == "ModifierGuide" and \
+                not (self.param.head_outward and self.param.headrules):
+            raise ValueError("ModifierGuide can only be used with head-outward binarization")
+
+
     def __init__(self, param: corpusparam):
         self._grammar = None
         self._corpus = None
         self.param = param
+        self.check_parameters()
         self.tempdir = TemporaryDirectory()
         arc_filename = self._archive_filename()
         try:

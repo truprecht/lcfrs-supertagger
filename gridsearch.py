@@ -49,6 +49,7 @@ if __name__ == "__main__":
     from configparser import ConfigParser
     from os.path import basename
     from datetime import datetime
+    import flair
 
     set_start_method("spawn")
 
@@ -72,7 +73,7 @@ if __name__ == "__main__":
     makedirs(filename, exist_ok=True)
 
     gpu_queue = Queue()
-    for device in args.devices:
+    for device in args.devices or [flair.device]:
         gpu_queue.put(device)
 
     ps = []

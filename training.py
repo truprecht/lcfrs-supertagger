@@ -17,8 +17,14 @@ def main(config, name, random_seed, param_selection_mode: bool = False):
 
     manual_seed(random_seed)
 
-    cp = corpusparam(**config["Corpus"], **config["Grammar"])
-    with SupertagCorpusFile(cp) as cf:
+    try:
+        cp = corpusparam(**config["Corpus"], **config["Grammar"])
+        cf = SupertagCorpusFile(cp)
+    except ValueError as e:
+        print(e)
+        return
+
+    with cf:
         tc = TrainingParameters(**config["Training"], **config["Eval-common"], **config["Eval-Development"], language=cp.language)
         model = DecoderModel.from_corpus(cf.corpus, cf.grammar, tc)
         model.set_eval_param(tc)
