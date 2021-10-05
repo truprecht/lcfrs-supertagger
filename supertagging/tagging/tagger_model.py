@@ -21,7 +21,7 @@ class DecoderModel(flair.nn.Model):
             * supertags and pos tags from `grammar`, and
             * word embeddings (as specified in `parameters`) from `corpus`.
         """
-        tag_dicts = { k: flair.data.Dictionary(add_unk=False) for k in ("supertag",) + corpus.separate_attribs }
+        tag_dicts = { k: flair.data.Dictionary(add_unk=True) for k in ("supertag",) + corpus.separate_attribs }
         for str_tag in grammar.str_tags:
             tag_dicts["supertag"].add_item(str_tag)
         for sentence in corpus.train:
@@ -216,7 +216,7 @@ class DecoderModel(flair.nn.Model):
                 # parse sentence and store parse tree in sentence
                 sentweights = sentweights[:len(sentence)]
                 predicted_tags = (
-                    zip(ktags, kweights)
+                    ((tag-1, weight) for tag, weight in zip(ktags, kweights) if tag != 0)
                     for ktags, kweights in zip(senttags[:len(sentence)], sentweights))
 
                 parses = self.__grammar__.parse(predicted_tags, **othertag, ktags=self.ktags, length=len(sentence), estimates=sentweights.numpy().min(axis=1))
