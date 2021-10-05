@@ -5,7 +5,8 @@ import flair
 import torch
 
 from supertagging.data import SupertagCorpusFile, corpusparam
-from supertagging.model import Supertagger, EvalParameters
+from supertagging.model import EvalParameters
+from supertagging.tagging.tagger_model import DecoderModel
 
 import logging
 logging.getLogger("flair").setLevel(40)
@@ -32,7 +33,7 @@ for ov in (args.o or []):
 
 lc = corpusparam(**config["Corpus"], **config["Grammar"])
 
-model = Supertagger.load(args.model)
+model = DecoderModel.load(args.model)
 model.eval()
 
 with SupertagCorpusFile(lc) as cf:
@@ -41,7 +42,7 @@ with SupertagCorpusFile(lc) as cf:
         ecdict["ktags"] = k
         ep = EvalParameters(**ecdict)
         model.set_eval_param(ep)
-        results, _ = model.evaluate(cf.corpus.dev, mini_batch_size=ep.batchsize, only_disc=ep.only_disc, accuracy="kbest", othertag_accuracy=False, return_loss=False)
+        results = model.evaluate(cf.corpus.dev, mini_batch_size=ep.batchsize, only_disc=ep.only_disc, accuracy="kbest", othertag_accuracy=False, return_loss=False)
         print(results.log_header)
         print(results.log_line)
         print(results.detailed_results)

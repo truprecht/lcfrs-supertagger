@@ -38,7 +38,7 @@ with SupertagCorpusFile(lc) as cf:
     model.set_eval_param(ec)
     model.eval()
     data = cf.corpus.dev if args.dev else cf.corpus.test
-    results, _ = model.evaluate(data, mini_batch_size=ec.batchsize,
+    results = model.evaluate(data, mini_batch_size=ec.batchsize,
         only_disc=ec.only_disc, accuracy=ec.accuracy, return_loss=False, othertag_accuracy=ec.othertag_accuracy)
     print(results.log_header)
     print(results.log_line)

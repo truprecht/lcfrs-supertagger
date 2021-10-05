@@ -92,6 +92,11 @@ class DecoderModel(flair.nn.Model):
     def ktags(self):
         return self.__ktags__
 
+
+    def label_type(self):
+        return "supertag"
+
+
     def _batch_to_embeddings(self, batch):
         if not type(batch) is list:
             batch = [batch]
@@ -230,6 +235,7 @@ class DecoderModel(flair.nn.Model):
 
     def evaluate(self,
             sentences: SupertagParseDataset,
+            gold_label_type: str = "supertag",
             mini_batch_size: int = 32,
             num_workers: int = 1,
             embedding_storage_mode: str = "none",
@@ -237,6 +243,8 @@ class DecoderModel(flair.nn.Model):
             only_disc: str = "both",
             accuracy: str = "both",
             othertag_accuracy: bool = True,
+            main_evaluation_metric = (),
+            gold_label_dictionary = None,
             return_loss: bool = True) -> Tuple[flair.training_utils.Result, float]:
         """ Predicts supertags, pos tags and parse trees, and reports the
             predictions scores for a set of sentences.
@@ -258,8 +266,7 @@ class DecoderModel(flair.nn.Model):
         """
         from flair.datasets import DataLoader
         from discodop.tree import ParentedTree, Tree
-        from discodop.treetransforms import unbinarize, removefanoutmarkers
-        from discodop.eval import Evaluator, readparam
+        from discodop.eval import Evaluator
         from timeit import default_timer
         from collections import Counter
 
@@ -335,13 +342,13 @@ class DecoderModel(flair.nn.Model):
                 scores[f"accuracy-{tagt}"] = acc_ctr[tagt] / acc_ctr["all"]
         scores["coverage"] = 1-(noparses/i)
         scores["time"] = end_time - start_time
-        return (
-            flair.training_utils.Result(
-                scores['F1-all'] if 'F1-all' in scores else scores['F1-disc'],
-                "\t".join(f"{mode}" for mode in scores),
-                "\t".join(f"{s}" for s in scores.values()),
-                '\n\n'.join(evaluator.summary() for evaluator in evaluators.values())),
-            eval_loss
+        return flair.training_utils.Result(
+            main_score=scores['F1-all'] if 'F1-all' in scores else scores['F1-disc'],
+            log_header="\t".join(f"{mode}" for mode in scores),
+            log_line="\t".join(f"{s}" for s in scores.values()),
+            detailed_results='\n\n'.join(evaluator.summary() for evaluator in evaluators.values()),
+            loss=eval_loss,
+            classification_report=None
         )
 
     def _get_state_dict(self):

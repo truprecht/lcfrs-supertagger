@@ -8,7 +8,7 @@ The parts concerning grammars (extraction, parsing) were implemented as an exten
 The project was developed and tested using python 3.8.
 We strongly recommend using a conda (or virtualenv) environment when running it:
 
-    conda create -n lcfrs-supertagger python=3.8 && conda activate lcfrs-supertagger
+    conda create -n lcfrs-supertagger python=3.8 gcc_linux-64 gxx_linux-64 && conda activate lcfrs-supertagger
     # or virtualenv: virtualenv venv && ./venv/bin/activate
 
 Build and install all dependencies, including our fork of disco-dop:

@@ -4,12 +4,13 @@
 """
 
 from supertagging.data import corpusparam, SupertagCorpusFile
-from supertagging.model import Supertagger, ModelParameters, EvalParameters
+from supertagging.model import EvalParameters
+from supertagging.tagging.tagger_model import DecoderModel, DecoderModelParameters
 from supertagging.parameters import Parameters
 
 FindlrParameters = Parameters.merge(
         Parameters(batchsize=(int, 1), optimizer=(str, "Adam")),
-        ModelParameters, EvalParameters)
+        DecoderModelParameters, EvalParameters)
 def main(config, name, args):
     from flair.trainers import ModelTrainer
     from flair.visual.training_curves import Plotter
@@ -19,13 +20,13 @@ def main(config, name, args):
     cp = corpusparam(**config["Corpus"], **config["Grammar"])
     with SupertagCorpusFile(cp) as cf:
         tc = FindlrParameters(**config["Training"], **config["Eval-common"], **config["Eval-Development"], language=cp.language)
-        model = Supertagger.from_corpus(cf.corpus, cf.grammar, tc)
+        model = DecoderModel.from_corpus(cf.corpus, cf.grammar, tc)
         model.set_eval_param(tc)
 
         corpus = cf.corpus.downsample(args.downsample) if args.downsample else cf.corpus
 
         if args.iterations is None:
-            epoch = ceil(len(corpus)/tc.batchsize)
+            epoch = ceil(len(corpus.train)/tc.batchsize)
             args.iterations = epoch * 5
 
         trainer = ModelTrainer(model, corpus)
