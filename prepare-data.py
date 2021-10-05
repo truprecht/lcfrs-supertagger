@@ -28,8 +28,12 @@ def extract(gridpoint):
     for k, v in gridpoint.items():
         config[k] = v
     config = corpusparam(**config)
-    with SupertagCorpusFile(config) as corpusfile:
-        return corpusfile.grammar.tags, gridpoint
+    try:
+        with SupertagCorpusFile(config) as corpusfile:
+            return corpusfile.grammar.tags, gridpoint
+    except ValueError as e:
+        print(e)
+        return [], gridpoint
 
 pool = Pool(max(1, args.j))
 for tags, gp in pool.imap_unordered(extract, grid):
