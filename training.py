@@ -35,7 +35,6 @@ def main(config, name, random_seed, param_selection_mode: bool = False):
             learning_rate=tc.lr,
             mini_batch_size=tc.batchsize,
             max_epochs=tc.epochs,
-            checkpoint=True,
             min_learning_rate=tc.min_lr,
             weight_decay=tc.weight_decay,
             patience=tc.patience,
