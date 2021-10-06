@@ -7,13 +7,23 @@ from discodop.eval import readparam
 from discodop.supertags import SupertagGrammar
 
 from ..data import SupertagParseDataset, SupertagParseCorpus
-from ..model import ModelParameters, EmbeddingFactory, EvalParameters, noparse, float_or_zero, str_or_none
+from ..model import float_or_zero, str_or_none
 from . import decoder
 from .encoder import BilstmEncoder
 from ..parameters import Parameters
+from .embeddings import EmbeddingBuilder, EmbeddingParameters
 
-DecoderModelParameters = Parameters.merge(ModelParameters,
-    Parameters(decoder_hidden_dim=(int, 100), decoder_embedding_dim=(int, 100), sample_gold_tags=(float, 0.0), decodertype=(str, "FfDecoder")))
+
+EvalParameters = Parameters(
+        ktags=(int, 5), fallbackprob=(float, 0.0),
+        batchsize=(int, 1),
+        evalfilename=(str, None), only_disc=(str, "both"), accuracy=(str, "both"), othertag_accuracy=(bool, True))
+DecoderModelParameters = Parameters.merge(
+    Parameters(
+        dropout=(float, 0.0), word_dropout=(float, 0.0), locked_dropout=(float, 0.0), lstm_dropout=(float, -1.0),
+        lstm_layers=(int, 1), lstm_size=(int, 100),
+        decoder_hidden_dim=(int, 100), decoder_embedding_dim=(int, 100), sample_gold_tags=(float, 0.0), decodertype=(str, "FfDecoder")),
+    EmbeddingParameters)
 class DecoderModel(flair.nn.Model):
     @classmethod
     def from_corpus(cls, corpus: SupertagParseCorpus, grammar: SupertagGrammar, parameters: DecoderModelParameters):
@@ -32,22 +42,24 @@ class DecoderModel(flair.nn.Model):
         kwargs = [ "decoder_embedding_dim", "decoder_hidden_dim", "dropout", "word_dropout", "locked_dropout", "lstm_dropout", "sample_gold_tags", "decodertype" ]
         kwargs = { kw: parameters.__getattribute__(kw) for kw in kwargs }
 
-        return DecoderModel(EmbeddingFactory(parameters, corpus), tag_dicts, grammar,
+        return DecoderModel(EmbeddingBuilder(parameters, corpus), tag_dicts, grammar,
             encoder_layers=parameters.lstm_layers, encoder_hidden_dim=parameters.lstm_size,
             **kwargs)
 
-    def __init__(self, embedding, tag_dicts, grammar, encoder_layers=1, encoder_hidden_dim=100, decoder_hidden_dim=100, decoder_embedding_dim=100, dropout=0.0, word_dropout=0.0, locked_dropout=0.0, lstm_dropout=0.0, sample_gold_tags = 0.0, decodertype: str = "FfDecoder"):
+    def __init__(self, embedding_builder, tag_dicts, grammar, encoder_layers=1, encoder_hidden_dim=100, decoder_hidden_dim=100, decoder_embedding_dim=100, dropout=0.0, word_dropout=0.0, locked_dropout=0.0, lstm_dropout=0.0, sample_gold_tags = 0.0, decodertype: str = "FfDecoder"):
         super(DecoderModel, self).__init__()
 
         self.sample_gold_tags = sample_gold_tags
 
-        self.embedding = embedding
+        self.embedding_builder = embedding_builder
         self.encoder_layers = encoder_layers
         self.encoder_hidden_dim = encoder_hidden_dim
         self.decoder_hidden_dim = decoder_hidden_dim
         self.decoder_embedding_dim = decoder_embedding_dim
         self.decodertype = decodertype
         decodertype = getattr(decoder, self.decodertype)
+
+        self.embedding = self.embedding_builder.produce()
 
         self.dropout = dropout
         self.word_dropout = word_dropout
@@ -64,7 +76,7 @@ class DecoderModel(flair.nn.Model):
         self.dropout_layers = torch.nn.Sequential(*dropout_layers)
 
         self.dictionaries = tag_dicts
-        inputlen = embedding.embedding_length
+        inputlen = self.embedding.embedding_length
 
         self.encoder = BilstmEncoder(inputlen, encoder_hidden_dim, layers=encoder_layers, dropout=lstm_dropout)
         self.decoder = decodertype(self.encoder.output_dim, len(tag_dicts["supertag"]), decoder_embedding_dim, decoder_hidden_dim)
@@ -354,7 +366,7 @@ class DecoderModel(flair.nn.Model):
     def _get_state_dict(self):
         return {
             "state_dict": self.state_dict(),
-            "embedding": self.embedding,
+            "embedding_builder": self.embedding_builder,
             "decoder_embedding_dim": self.decoder_embedding_dim,
             "decoder_hidden_dim": self.decoder_hidden_dim,
             "encoder_layers": self.encoder_layers,
@@ -373,7 +385,7 @@ class DecoderModel(flair.nn.Model):
 
     @classmethod
     def _init_model_with_state_dict(cls, state):
-        args = state["embedding"], state["tags"], SupertagGrammar(state["grammar"]["tags"], state["grammar"]["roots"])
+        args = state["embedding_builder"], state["tags"], SupertagGrammar(state["grammar"]["tags"], state["grammar"]["roots"])
         kwargs = {
             kw: state[kw]
             for kw in ("encoder_hidden_dim", "encoder_layers", "decoder_hidden_dim",

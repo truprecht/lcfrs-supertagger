@@ -4,8 +4,7 @@
 """
 
 from supertagging.data import corpusparam, SupertagCorpusFile
-from supertagging.model import EvalParameters
-from supertagging.tagging.tagger_model import DecoderModel, DecoderModelParameters
+from supertagging.tagging.tagger_model import DecoderModel, DecoderModelParameters, EvalParameters
 from supertagging.parameters import Parameters
 
 FindlrParameters = Parameters.merge(

@@ -2,9 +2,8 @@ import flair
 import torch
 
 from supertagging.data import corpusparam, SupertagCorpusFile
-from supertagging.model import EvalParameters
 from supertagging.parameters import Parameters
-from supertagging.tagging.tagger_model import DecoderModel, DecoderModelParameters
+from supertagging.tagging.tagger_model import DecoderModel, DecoderModelParameters, EvalParameters
 
 TrainingParameters = Parameters.merge(
         Parameters(epochs=(int, 1), lr=(float, 0.01), batchsize=(int, 1), weight_decay=(float, 0.01),

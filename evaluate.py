@@ -5,8 +5,7 @@ import flair
 import torch
 
 from supertagging.data import SupertagCorpusFile, corpusparam
-from supertagging.model import EvalParameters
-from supertagging.tagging.tagger_model import DecoderModel
+from supertagging.tagging.tagger_model import DecoderModel, EvalParameters
 
 import logging
 logging.getLogger("flair").setLevel(40)

@@ -1,11 +1,11 @@
 from itertools import product
 from multiprocessing import Process, Queue, set_start_method
 from os import makedirs
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable
 
 import torch
 
-from training import main, corpusparam, TrainingParameters
+from training import main
 
 class Grid:
     @classmethod

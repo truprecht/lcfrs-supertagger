@@ -1,2 +1,3 @@
+torch==1.9.1
 flair==0.9
 tqdm
