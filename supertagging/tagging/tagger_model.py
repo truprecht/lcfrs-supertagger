@@ -148,8 +148,7 @@ class DecoderModel(flair.nn.Model):
         else:
             stags = None
         feats = self.forward(batch, gold_outputs=stags)
-        loss, denom = self._calculate_loss(feats, batch)
-        return loss / denom
+        return self._calculate_loss(feats, batch)
 
 
     def forward(self, batch, batch_first=False, gold_outputs=None):
