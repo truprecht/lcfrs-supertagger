@@ -2,7 +2,7 @@ from contextlib import AbstractContextManager
 from functools import reduce
 from os import makedirs
 from pickle import dump, load
-from tarfile import TarFile
+import tarfile
 from tempfile import TemporaryDirectory
 from typing import Set
 from enum import IntEnum
@@ -134,7 +134,7 @@ class SupertagCorpusFile(AbstractContextManager):
         splitstr = "-".join(self.param.split.split())
         binstr = f"bin-{self.param.h}-{self.param.v}-{'ho' if self.param.head_outward else 'r'}"
         ntstr = "-".join(self.param.nonterminal_features.split())
-        return f"{self.param.cachedir}/{basename}.{splitstr}.{binstr}.{self.param.guide}.{ntstr}"
+        return f"{self.param.cachedir}/{basename}.{splitstr}.{binstr}.{self.param.guide}.{ntstr}.tar.gz"
 
 
     def check_parameters(self):
@@ -151,13 +151,13 @@ class SupertagCorpusFile(AbstractContextManager):
         self.tempdir = TemporaryDirectory()
         arc_filename = self._archive_filename()
         try:
-            with TarFile(arc_filename) as arcfile:
+            with tarfile.open(arc_filename, mode="r:gz") as arcfile:
                 assert set(arcfile.getnames()) == set(self.__class__.ARCF), "damaged cache file"
                 arcfile.extractall(self.tempdir.name)
         except FileNotFoundError:
             SupertagParseCorpus.extract_into(self.tempdir.name, self.param)
             makedirs(self.param.cachedir, exist_ok=True)
-            with TarFile(arc_filename, "w") as tarf:
+            with tarfile.open(arc_filename, mode="w:gz") as tarf:
                 for fname in self.__class__.ARCF:
                     tarf.add(f"{self.tempdir.name}/{fname}", arcname=fname)
 
