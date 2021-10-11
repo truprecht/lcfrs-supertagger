@@ -9,8 +9,12 @@ def float_or_zero(s):
         return 0.0
 
 
-def str_or_none(s: str):
-    return None if s == "None" else s
+def parse_or_none(s: str, parse_t = str):
+    if s == "None":
+        return None
+    if parse_t is str:
+        return s
+    return parse_t(s)
 
 
 def noparse(partial: Tree, postags: list) -> Tree:

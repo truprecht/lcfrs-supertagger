@@ -1,7 +1,7 @@
 import flair
 import torch
 
-from supertagging.data import corpusparam, SupertagCorpusFile
+from supertagging.data import corpusparam, SupertagCorpusFile, supertag_attribs
 from supertagging.parameters import Parameters
 from supertagging.tagging.tagger_model import DecoderModel, DecoderModelParameters, EvalParameters
 
@@ -25,7 +25,7 @@ def main(config, name, random_seed, param_selection_mode: bool = False):
 
     with cf:
         tc = TrainingParameters(**config["Training"], **config["Eval-common"], **config["Eval-Development"], language=cp.language)
-        model = DecoderModel.from_corpus(cf.corpus, cf.grammar, tc)
+        model = DecoderModel.from_corpus(cf.corpus, cf.grammar, tc, cf.corpus.separate_attribs)
         model.set_eval_param(tc)
 
         trainer = ModelTrainer(model, cf.corpus, optimizer=getattr(torch.optim, tc.optimizer), use_tensorboard=True)

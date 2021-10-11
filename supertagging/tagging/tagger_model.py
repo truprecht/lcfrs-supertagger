@@ -1,13 +1,13 @@
 import torch
 import flair
 
-from typing import Tuple
+from typing import Tuple, Iterable
 
 from discodop.eval import readparam
 from discodop.supertags import SupertagGrammar
 
 from ..data import SupertagParseDataset, SupertagParseCorpus
-from ..model import float_or_zero, str_or_none
+from ..model import float_or_zero, parse_or_none
 from . import decoder
 from .encoder import BilstmEncoder
 from ..parameters import Parameters
@@ -26,17 +26,17 @@ DecoderModelParameters = Parameters.merge(
     EmbeddingParameters)
 class DecoderModel(flair.nn.Model):
     @classmethod
-    def from_corpus(cls, corpus: SupertagParseCorpus, grammar: SupertagGrammar, parameters: DecoderModelParameters):
+    def from_corpus(cls, corpus: SupertagParseCorpus, grammar: SupertagGrammar, parameters: DecoderModelParameters, additional_tags: Iterable[str]):
         """ Construct an instance of the model using
             * supertags and pos tags from `grammar`, and
             * word embeddings (as specified in `parameters`) from `corpus`.
         """
-        tag_dicts = { k: flair.data.Dictionary(add_unk=True) for k in ("supertag",) + corpus.separate_attribs }
+        tag_dicts = { k: flair.data.Dictionary(add_unk=True) for k in ("supertag",) + tuple(additional_tags) }
         for str_tag in grammar.str_tags:
             tag_dicts["supertag"].add_item(str_tag)
         for sentence in corpus.train:
             for token in sentence:
-                for k in corpus.separate_attribs:
+                for k in tag_dicts:
                     tag_dicts[k].add_item(token.get_tag(k).value)
 
         kwargs = [ "decoder_embedding_dim", "decoder_hidden_dim", "dropout", "word_dropout", "locked_dropout", "lstm_dropout", "sample_gold_tags", "decodertype" ]
@@ -202,7 +202,7 @@ class DecoderModel(flair.nn.Model):
             othertags = (
                 {
                     name: [
-                        str_or_none(self.dictionaries[name].get_item_for_index(idx))
+                        parse_or_none(self.dictionaries[name].get_item_for_index(idx), int if name == "transport" else str)
                         for idx in tscores[sentidx, :len(sent)].argmax(dim=-1)]
                     for name, tscores in scores.items() if name != "supertag"
                 } for sentidx, sent in enumerate(batch) )
