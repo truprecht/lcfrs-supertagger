@@ -77,8 +77,7 @@ class SupertagParseDataset(ColumnDataset):
 
 class SupertagParseCorpus(ColumnCorpus):
     def __init__(self, directory, core_attribs: int):
-        dev, test, train = find_train_dev_test_files(directory, None, None, None, True)
-        print(dev, test, train)
+        dev, test, train = (f"{directory}/{p}-tags" for p in ("dev", "test", "train"))
         train = SupertagParseDataset(train, core_attribs)
         dev = SupertagParseDataset(dev, core_attribs)
         test = SupertagParseDataset(test, core_attribs)
