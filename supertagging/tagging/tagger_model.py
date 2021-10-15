@@ -232,14 +232,23 @@ class DecoderModel(flair.nn.Model):
 
                 parses = self.__grammar__.parse(predicted_tags, **othertag, ktags=self.ktags, length=len(sentence), estimates=sentweights.numpy().min(axis=1))
                 try:
-                    parse = str(next(parses))
+                    treeparse = next(parses)
+                    if not "pos" in self.dictionaries:
+                        postags = list(p for _, p in sorted(treeparse.pos()))
+                    parse = str(treeparse)
                 except StopIteration:
                     if "pos" in othertag:
                         leaves = (f"({p} {i})" for i, p in enumerate(othertag["pos"]))
                     else:
                         leaves = (f"({p} {i})" for i, p in enumerate(["NOPARSE"]*len(sentence)))
+                        postags = ["<UNK>"]*len(sentence)
                     parse = f"(NOPARSE {' '.join(leaves)})"
                 sentence.set_label(label_name, parse)
+                
+                if not "pos" in self.dictionaries and othertag_storage_mode:
+                    for token, pos in zip(sentence, postags):
+                        token.add_tag_label(get_label_name("pos"), flair.data.Label(pos))
+
             store_embeddings(batch, storage_mode=embedding_storage_mode)
             if return_loss:
                 return self._calculate_loss(scores.items(), batch, batch_first=True)
@@ -314,6 +323,8 @@ class DecoderModel(flair.nn.Model):
         if return_loss:
             eval_loss /= n_predictions
 
+        othertags = (set(self.dictionaries) - {"supertag"}) | { "pos" } if othertag_accuracy else {}
+
         i = 0
         noparses = 0
         acc_ctr = Counter()
@@ -326,10 +337,8 @@ class DecoderModel(flair.nn.Model):
                     if accuracy in ("best", "both") and token.get_tag("supertag").value == \
                             token.get_tag('predicted-supertag').value:
                         acc_ctr["best"] += 1
-                    if othertag_accuracy:
-                        for tagt in self.dictionaries:
-                            if tagt == "supertag": continue
-                            acc_ctr[tagt] += int(token.get_tag(tagt).value == token.get_tag(f"predicted-{tagt}").value)
+                    for tagt in othertags:
+                        acc_ctr[tagt] += int(token.get_tag(tagt).value == token.get_tag(f"predicted-{tagt}").value)
                 acc_ctr["all"] += len(sentence)
                 sent = [token.text for token in sentence]
                 gold = ParentedTree(sentence.get_labels("tree")[0].value)
@@ -347,10 +356,8 @@ class DecoderModel(flair.nn.Model):
             scores["accuracy-kbest"] = acc_ctr["kbest"] / acc_ctr["all"]
         if accuracy in ("both", "best"):
             scores["accuracy-best"] = acc_ctr["best"] / acc_ctr["all"]
-        if othertag_accuracy:
-            for tagt in self.dictionaries:
-                if tagt == "supertag": continue
-                scores[f"accuracy-{tagt}"] = acc_ctr[tagt] / acc_ctr["all"]
+        for tagt in othertags:
+            scores[f"accuracy-{tagt}"] = acc_ctr[tagt] / acc_ctr["all"]
         scores["coverage"] = 1-(noparses/i)
         scores["time"] = end_time - start_time
         return flair.training_utils.Result(
