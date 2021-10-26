@@ -6,7 +6,7 @@ from supertagging.parameters import Parameters
 from supertagging.tagging.tagger_model import DecoderModel, DecoderModelParameters, EvalParameters
 
 TrainingParameters = Parameters.merge(
-        Parameters(epochs=(int, 1), lr=(float, 0.01), batchsize=(int, 1), weight_decay=(float, 0.01),
+        Parameters(epochs=(int, 1), lr=(float, 0.01), batchsize=(int, 1), micro_batch_size=(int, 0), weight_decay=(float, 0.01),
         patience=(int, 1), lr_decay=(float, 0.5), min_lr=(float, 0.0), optimizer=(str, "Adam")),
         DecoderModelParameters, EvalParameters)
 def main(config, name, random_seed, param_selection_mode: bool = False):
@@ -24,7 +24,7 @@ def main(config, name, random_seed, param_selection_mode: bool = False):
         return
 
     with cf:
-        tc = TrainingParameters(**config["Training"], **config["Eval-common"], **config["Eval-Development"], language=cp.language)
+        tc = TrainingParameters(**config["Training"], language=cp.language)
         model = DecoderModel.from_corpus(cf.corpus, cf.grammar, tc, cf.corpus.separate_attribs)
         model.set_eval_param(tc)
 
@@ -33,6 +33,7 @@ def main(config, name, random_seed, param_selection_mode: bool = False):
             name,
             learning_rate=tc.lr,
             mini_batch_size=tc.batchsize,
+            mini_batch_chunk_size=tc.micro_batch_size,
             max_epochs=tc.epochs,
             min_learning_rate=tc.min_lr,
             weight_decay=tc.weight_decay,

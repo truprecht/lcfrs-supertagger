@@ -15,9 +15,8 @@ from .embeddings import EmbeddingBuilder, EmbeddingParameters
 
 
 EvalParameters = Parameters(
-        ktags=(int, 5), fallbackprob=(float, 0.0),
-        batchsize=(int, 1),
-        evalfilename=(str, None), only_disc=(str, "both"), accuracy=(str, "both"), othertag_accuracy=(bool, True))
+        ktags=(int, 10), fallbackprob=(float, 0.0), batchsize=(int, 32),
+        evalfilename=(str, "disco-dop/proper.prm"), only_disc=(str, "both"), accuracy=(str, "none"), othertag_accuracy=(bool, False))
 DecoderModelParameters = Parameters.merge(
     Parameters(
         dropout=(float, 0.0), word_dropout=(float, 0.0), locked_dropout=(float, 0.0), lstm_dropout=(float, 0.0),
