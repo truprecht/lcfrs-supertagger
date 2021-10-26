@@ -80,7 +80,9 @@ class PretrainedBuilder(TokenEmbeddingBuilder):
 
     def produce(self) -> TokenEmbeddings:
         if self.embedding_t is TransformerWordEmbeddings:
-            return TransformerWordEmbeddings(model=self.model_str, fine_tune=self.tune, layers="-1,-2,-3,-4", layer_mean=False)
+            if flair.__version__ >= "0.9":
+                return TransformerWordEmbeddings(model=self.model_str, fine_tune=self.tune, layers="-1,-2,-3,-4", layer_mean=False)
+            return TransformerWordEmbeddings(model=self.model_str, fine_tune=self.tune)
         if self.embedding_t is FlairEmbeddings:
             return StackedEmbeddings([
                 FlairEmbeddings(f"{self.model_str}-forward", fine_tune=self.tune),

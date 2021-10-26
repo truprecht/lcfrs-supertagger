@@ -20,7 +20,7 @@ EvalParameters = Parameters(
         evalfilename=(str, None), only_disc=(str, "both"), accuracy=(str, "both"), othertag_accuracy=(bool, True))
 DecoderModelParameters = Parameters.merge(
     Parameters(
-        dropout=(float, 0.0), word_dropout=(float, 0.0), locked_dropout=(float, 0.0), lstm_dropout=(float, -1.0),
+        dropout=(float, 0.0), word_dropout=(float, 0.0), locked_dropout=(float, 0.0), lstm_dropout=(float, 0.0),
         lstm_layers=(int, 1), lstm_size=(int, 100),
         decoder_hidden_dim=(int, 100), decoder_embedding_dim=(int, 100), sample_gold_tags=(float, 0.0), decodertype=(str, "FfDecoder")),
     EmbeddingParameters)
@@ -363,14 +363,16 @@ class DecoderModel(flair.nn.Model):
             scores[f"accuracy-{tagt}"] = acc_ctr[tagt] / acc_ctr["all"]
         scores["coverage"] = 1-(noparses/i)
         scores["time"] = end_time - start_time
-        return flair.training_utils.Result(
+
+        result_args = dict(
             main_score=scores['F1-all'] if 'F1-all' in scores else scores['F1-disc'],
             log_header="\t".join(f"{mode}" for mode in scores),
             log_line="\t".join(f"{s}" for s in scores.values()),
-            detailed_results='\n\n'.join(evaluator.summary() for evaluator in evaluators.values()),
-            loss=eval_loss,
-            classification_report=None
-        )
+            detailed_results='\n\n'.join(evaluator.summary() for evaluator in evaluators.values()))
+        
+        if flair.__version__ >= "0.9":
+            return flair.training_utils.Result(**result_args, loss=eval_loss, classification_report=None)
+        return flair.training_utils.Result(**result_args), eval_loss
 
     def _get_state_dict(self):
         return {
