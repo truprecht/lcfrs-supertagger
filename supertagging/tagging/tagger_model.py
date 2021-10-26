@@ -133,13 +133,16 @@ class DecoderModel(flair.nn.Model):
             yield tagname, mat
 
 
-    def _calculate_loss(self, feats, batch, batch_first=False):
+    def _calculate_loss(self, feats, batch, batch_first=False, mean=True):
         loss = torch.tensor(0.0, device=flair.device)
         feats = dict(feats)
         for tagname, golds in self._batch_to_gold(batch, batch_first):
             loss += torch.nn.functional.cross_entropy(feats[tagname].flatten(end_dim=1), golds.flatten(end_dim=1), reduction="sum", ignore_index=-100)
         n_predictions = sum(len(sentence) for sentence in batch)
-        return loss, n_predictions
+        if mean:
+            return loss / n_predictions
+        else:
+            return loss, n_predictions
 
 
     def forward_loss(self, batch):
@@ -148,7 +151,7 @@ class DecoderModel(flair.nn.Model):
         else:
             stags = None
         feats = self.forward(batch, gold_outputs=stags)
-        return self._calculate_loss(feats, batch)
+        return self._calculate_loss(feats, batch, mean=True)
 
 
     def forward(self, batch, batch_first=False, gold_outputs=None):
@@ -251,7 +254,7 @@ class DecoderModel(flair.nn.Model):
 
             store_embeddings(batch, storage_mode=embedding_storage_mode)
             if return_loss:
-                return self._calculate_loss(scores.items(), batch, batch_first=True)
+                return self._calculate_loss(scores.items(), batch, batch_first=True, mean=False)
 
     def evaluate(self,
             sentences: SupertagParseDataset,
