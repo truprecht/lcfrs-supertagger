@@ -136,11 +136,11 @@ class DecoderModel(flair.nn.Model):
         loss = torch.tensor(0.0, device=flair.device)
         feats = dict(feats)
         for tagname, golds in self._batch_to_gold(batch, batch_first):
-            loss += torch.nn.functional.cross_entropy(feats[tagname].flatten(end_dim=1), golds.flatten(end_dim=1), reduction="sum", ignore_index=-100)
-        n_predictions = sum(len(sentence) for sentence in batch)
+            loss += torch.nn.functional.cross_entropy(feats[tagname].flatten(end_dim=1), golds.flatten(end_dim=1), reduction="mean" if mean else "sum", ignore_index=-100)
         if mean:
-            return loss / n_predictions
+            return loss
         else:
+            n_predictions = sum(len(sentence) for sentence in batch)
             return loss, n_predictions
 
 

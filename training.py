@@ -33,7 +33,7 @@ def main(config, name, random_seed, param_selection_mode: bool = False):
             name,
             learning_rate=tc.lr,
             mini_batch_size=tc.batchsize,
-            mini_batch_chunk_size=tc.micro_batch_size,
+            mini_batch_chunk_size=tc.micro_batch_size or None,
             max_epochs=tc.epochs,
             min_learning_rate=tc.min_lr,
             weight_decay=tc.weight_decay,
