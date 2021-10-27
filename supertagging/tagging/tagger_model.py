@@ -156,8 +156,9 @@ class DecoderModel(flair.nn.Model):
     def forward(self, batch, batch_first=False, gold_outputs=None):
         inputfeats = self._batch_to_embeddings(batch)
         inputfeats = self.dropout_layers(inputfeats)
-        inputfeats = self.encoder(inputfeats)
-        inputfeats = self.dropout_layers(inputfeats)
+        if self.encoder_layers > 0:
+            inputfeats = self.encoder(inputfeats)
+            inputfeats = self.dropout_layers(inputfeats)
         stagfeats = self.decoder(inputfeats, gold_outputs=gold_outputs, gold_sampling_prob=self.sample_gold_tags if not gold_outputs is None else 0.0)
         yield "supertag", stagfeats if not batch_first else stagfeats.transpose(0,1)
         for name, decoder in self.othertaggers.items():
