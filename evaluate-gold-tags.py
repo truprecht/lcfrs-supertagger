@@ -19,21 +19,21 @@ from supertagging.model import parse_or_none
 config = ConfigParser()
 config.read(argv[1])
 
-config = { **config["Corpus"], **config["Eval-common"], **config["Eval-Development"], **config["Grammar"] }
-sep = set(config["core_attribs"].split())
+config = { **config["Corpus"], **config["Grammar"] }
 
 with SupertagCorpusFile(corpusparam(**config)) as cp:
     data = cp.corpus.train
+    sep = set(cp.corpus.separate_attribs)
     grammar = cp.grammar
     i = 0
-    evaluator = Evaluator(readparam(config["evalfilename"]))
+    evaluator = Evaluator(readparam("disco-dop/proper.prm"))
     for sentence in tqdm(data, desc="Parsing gold tags"):
         words = tuple(t.text for t in sentence)
         poss = tuple(t.get_tag("pos").value for t in sentence) if "pos" in sep else None
         constituents = tuple(parse_or_none(t.get_tag("constituent").value) for t in sentence) if "constituent" in sep else None
         transports = tuple(parse_or_none(t.get_tag("transport").value, int) for t in sentence) if "transport" in sep else None
         tags = tuple(((t.get_tag("supertag").value, 0.0),) for t in sentence)
-        parses = grammar.parse(tags, str_tag_mode=True, pos=poss, constituent=constituents, transports=transports)
+        parses = grammar.parse(tags, str_tag_mode=True, pos=poss, constituent=constituents, transport=transports)
         try:
             parse = next(parses)
         except StopIteration:
@@ -41,6 +41,8 @@ with SupertagCorpusFile(corpusparam(**config)) as cp:
             parse = ParentedTree(f"(NOPARSE {' '.join(leaves)})")
         gold = ParentedTree(sentence.get_labels("tree")[0].value)
         parse = ParentedTree.convert(parse)
+        if len(gold.leaves()) != len(parse.leaves()):
+            print(gold, parse)
         evaluator.add(i, gold.copy(deep=True), list(words), parse.copy(deep=True), list(words))
         i += 1
     print(evaluator.summary())
