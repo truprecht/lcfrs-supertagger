@@ -41,8 +41,6 @@ with SupertagCorpusFile(corpusparam(**config)) as cp:
             parse = ParentedTree(f"(NOPARSE {' '.join(leaves)})")
         gold = ParentedTree(sentence.get_labels("tree")[0].value)
         parse = ParentedTree.convert(parse)
-        if len(gold.leaves()) != len(parse.leaves()):
-            print(gold, parse)
         evaluator.add(i, gold.copy(deep=True), list(words), parse.copy(deep=True), list(words))
         i += 1
     print(evaluator.summary())

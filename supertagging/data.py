@@ -27,7 +27,7 @@ from .split import SplitFactory
 corpusparam = Parameters(
     language=(str, None),
     filename=(str, None), split=(str, None), headrules=(str, ""), head_outward=(bool, False),
-    guide=(str, "InorderGuide"), nonterminal_features=(str, "Constituent"), core_attribs=(str, "grammar_rules transport constituent pos"),
+    guide=(str, "InorderGuide"), nonterminal_features=(str, "Constituent"), core_attribs=(str, "gtc"),
     inputenc=(str, "utf8"), inputfmt=(str, "export"), h=(int, 0), v=(int, 1), cachedir=(str, ".cache"))
 
 
