@@ -8,3 +8,4 @@ runs
 *.tags
 *.trees
 _workspace
+corpora/*

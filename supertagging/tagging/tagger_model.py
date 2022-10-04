@@ -14,21 +14,27 @@ from ..parameters import Parameters
 from .embeddings import EmbeddingBuilder, EmbeddingParameters
 
 
+# parameters used during test time
 EvalParameters = Parameters(
         ktags=(int, 10), fallbackprob=(float, 0.0), batchsize=(int, 32),
         evalfilename=(str, "disco-dop/proper.prm"), only_disc=(str, "both"), accuracy=(str, "none"), othertag_accuracy=(bool, False))
+
+# model parameters for the embeddings (last row), encoder (first and second rows)
+# and decoder (third row)
 DecoderModelParameters = Parameters.merge(
     Parameters(
         dropout=(float, 0.0), word_dropout=(float, 0.0), locked_dropout=(float, 0.0), lstm_dropout=(float, 0.0),
         lstm_layers=(int, 1), lstm_size=(int, 100),
         decoder_hidden_dim=(int, 100), decoder_embedding_dim=(int, 100), sample_gold_tags=(float, 0.0), decodertype=(str, "FfDecoder")),
     EmbeddingParameters)
+
 class DecoderModel(flair.nn.Model):
     @classmethod
     def from_corpus(cls, corpus: SupertagParseCorpus, grammar: SupertagGrammar, parameters: DecoderModelParameters, additional_tags: Iterable[str]):
         """ Construct an instance of the model using
             * supertags and pos tags from `grammar`, and
             * word embeddings (as specified in `parameters`) from `corpus`.
+            The tags defined in `additional_tags` are predicted separately from the supertags.
         """
         tag_dicts = { k: flair.data.Dictionary(add_unk=True) for k in ("supertag",) + tuple(additional_tags) }
         for str_tag in grammar.str_tags:
@@ -200,8 +206,12 @@ class DecoderModel(flair.nn.Model):
         with torch.no_grad():
             scores = dict(self.forward(batch, batch_first=True))
             tagscores = scores["supertag"].cpu()
+            # sorts the tensor indices in-place s.t. the first `self.ktags` entries are
+            # the indices of the best scores, after that these scores are gathered
             tags = argpartition(-tagscores, self.ktags, axis=2)[:, :, 0:self.ktags]
             neglogprobs = -tagscores.gather(2, tags).log_softmax(dim=2)
+            # stores the best prediction for each position and tag type that is
+            # not part of the supertag
             othertags = (
                 {
                     name: [
@@ -328,6 +338,7 @@ class DecoderModel(flair.nn.Model):
 
         othertags = (set(self.dictionaries) - {"supertag"}) | { "pos" } if othertag_accuracy else {}
 
+        # compare all predictions to gold and compute scores
         i = 0
         noparses = 0
         acc_ctr = Counter()
@@ -364,6 +375,8 @@ class DecoderModel(flair.nn.Model):
         scores["coverage"] = 1-(noparses/i)
         scores["time"] = end_time - start_time
 
+        # score report contains the accuracies of tag predictions,
+        # parsing score and parsing time
         result_args = dict(
             main_score=scores['F1-all'] if 'F1-all' in scores else scores['F1-disc'],
             log_header="\t".join(f"{mode}" for mode in scores),

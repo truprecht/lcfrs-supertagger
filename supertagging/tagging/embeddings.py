@@ -9,7 +9,7 @@ from flair.embeddings import TokenEmbeddings, FlairEmbeddings, StackedEmbeddings
 from abc import ABC, abstractmethod
 from collections import Counter
 
-
+# one-hot module storing the read token dictionary for (de-)serialization
 class SerializableOneHotEmbeddings(OneHotEmbeddings):
     @classmethod
     def build_dictionary(self, corpus: Corpus, field: str, min_freq: int = 1):
@@ -26,15 +26,20 @@ class SerializableOneHotEmbeddings(OneHotEmbeddings):
                 vocab.add_item(token)
         return vocab
 
-    def __init__(self, vocab: Dictionary, field: str, length: int):
+    def __init__(self, vocab: Dictionary, field: str, length: int, minf: int):
         empty_corpus = flair.data.Corpus([])
-        super().__init__(empty_corpus, field=field, embedding_length=length)
+        super().__init__(empty_corpus, field=field, embedding_length=length, min_freq=minf)
         self.vocab_dictionary = vocab
         self.embedding_layer = torch.nn.Embedding(len(self.vocab_dictionary), self.embedding_length)
         torch.nn.init.xavier_uniform_(self.embedding_layer.weight)
         self.to(flair.device)
 
 
+# embedding parameters, `embedding` is a sequence of embedding types out of:
+# word, pos (one-hot-embeddings for tokens or pos tags), char (character-level bilstm),
+# flair (flair's pretrained character-level embeddings), fasttext or any bert model
+# descriptor on the hugging face model hub, like bert-base.
+# word, pos and char are parametrized in lines 2--4
 EmbeddingParameters = Parameters(
     embedding=(str, "word char"), tune_embedding=(bool, False), language=(str, ""),
     pos_embedding_dim=(int, 20),
@@ -110,7 +115,7 @@ class OneHotEmbeddingBuilder(TokenEmbeddingBuilder):
         self.length = parameters.__getattribute__(f"{name}_embedding_dim")
 
     def produce(self) -> TokenEmbeddings:
-        return SerializableOneHotEmbeddings(self.vocab, self.field, self.length)
+        return SerializableOneHotEmbeddings(self.vocab, self.field, self.length, self.min_freq)
 
 
 class EmbeddingBuilder:
