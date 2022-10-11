@@ -8,8 +8,7 @@ from discodop.supertags import SupertagGrammar
 
 from ..data import SupertagParseDataset, SupertagParseCorpus
 from ..model import float_or_zero, parse_or_none
-from . import decoder
-from .encoder import BilstmEncoder
+from . import decoder, encoder
 from ..parameters import Parameters
 from .embeddings import EmbeddingBuilder, EmbeddingParameters
 
@@ -23,8 +22,8 @@ EvalParameters = Parameters(
 # and decoder (third row)
 DecoderModelParameters = Parameters.merge(
     Parameters(
-        dropout=(float, 0.0), word_dropout=(float, 0.0), locked_dropout=(float, 0.0), lstm_dropout=(float, 0.0),
-        lstm_layers=(int, 1), lstm_size=(int, 100),
+        dropout=(float, 0.0), word_dropout=(float, 0.0), locked_dropout=(float, 0.0),
+        lstm_dropout=(float, 0.0), lstm_layers=(int, 1), lstm_size=(int, 100), encodertype=(str, "BilstmEncoder"),
         decoder_hidden_dim=(int, 100), decoder_embedding_dim=(int, 100), sample_gold_tags=(float, 0.0), decodertype=(str, "FfDecoder")),
     EmbeddingParameters)
 
@@ -44,14 +43,14 @@ class DecoderModel(flair.nn.Model):
                 for k in tag_dicts:
                     tag_dicts[k].add_item(token.get_tag(k).value)
 
-        kwargs = [ "decoder_embedding_dim", "decoder_hidden_dim", "dropout", "word_dropout", "locked_dropout", "lstm_dropout", "sample_gold_tags", "decodertype" ]
+        kwargs = [ "decoder_embedding_dim", "decoder_hidden_dim", "dropout", "word_dropout", "locked_dropout", "lstm_dropout", "sample_gold_tags", "decodertype", "encodertype" ]
         kwargs = { kw: parameters.__getattribute__(kw) for kw in kwargs }
 
         return DecoderModel(EmbeddingBuilder(parameters, corpus), tag_dicts, grammar,
             encoder_layers=parameters.lstm_layers, encoder_hidden_dim=parameters.lstm_size,
             **kwargs)
 
-    def __init__(self, embedding_builder, tag_dicts, grammar, encoder_layers=1, encoder_hidden_dim=100, decoder_hidden_dim=100, decoder_embedding_dim=100, dropout=0.0, word_dropout=0.0, locked_dropout=0.0, lstm_dropout=0.0, sample_gold_tags = 0.0, decodertype: str = "FfDecoder"):
+    def __init__(self, embedding_builder, tag_dicts, grammar, encoder_layers=1, encoder_hidden_dim=100, decoder_hidden_dim=100, decoder_embedding_dim=100, dropout=0.0, word_dropout=0.0, locked_dropout=0.0, lstm_dropout=0.0, sample_gold_tags = 0.0, decodertype: str = "FfDecoder", encodertype: str = "BilstmEncoder"):
         super(DecoderModel, self).__init__()
 
         self.sample_gold_tags = sample_gold_tags
@@ -62,6 +61,8 @@ class DecoderModel(flair.nn.Model):
         self.decoder_hidden_dim = decoder_hidden_dim
         self.decoder_embedding_dim = decoder_embedding_dim
         self.decodertype = decodertype
+        self.encodertype = encodertype
+        encodertype = getattr(encoder, self.encodertype)
         decodertype = getattr(decoder, self.decodertype)
 
         self.embedding = self.embedding_builder.produce()
@@ -83,7 +84,7 @@ class DecoderModel(flair.nn.Model):
         self.dictionaries = tag_dicts
         inputlen = self.embedding.embedding_length
 
-        self.encoder = BilstmEncoder(inputlen, encoder_hidden_dim, layers=encoder_layers, dropout=lstm_dropout)
+        self.encoder = encodertype(inputlen, encoder_hidden_dim, layers=encoder_layers, dropout=lstm_dropout)
         self.decoder = decodertype(self.encoder.output_dim, len(tag_dicts["supertag"]), decoder_embedding_dim, decoder_hidden_dim)
         self.othertaggers = torch.nn.ModuleDict({
             name: torch.nn.Linear(self.encoder.output_dim, len(dictionary))
@@ -404,6 +405,7 @@ class DecoderModel(flair.nn.Model):
             "evalparam": self.evalparam,
             "sample_gold_tags": self.sample_gold_tags,
             "decodertype": self.decodertype,
+            "encodertype": self.encodertype,
             "grammar": self.__grammar__.__getstate__()
         }
 
@@ -414,7 +416,7 @@ class DecoderModel(flair.nn.Model):
             kw: state[kw]
             for kw in ("encoder_hidden_dim", "encoder_layers", "decoder_hidden_dim",
                 "decoder_embedding_dim", "dropout", "word_dropout", "locked_dropout",
-                "lstm_dropout", "sample_gold_tags", "decodertype") }
+                "lstm_dropout", "sample_gold_tags", "decodertype", "encodertype") }
         model = cls(*args, **kwargs)
         model.__ktags__ = state["ktags"]
         model.__evalparam__ = state["evalparam"]

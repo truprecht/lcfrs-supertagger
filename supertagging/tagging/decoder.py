@@ -16,6 +16,20 @@ class FfDecoder(t.nn.Module):
         return self.ff(feats)
 
 
+class MlpDecoder(t.nn.Module):
+    def __init__(self, input_len: int, n_outputs: int, *args, **kwargs):
+        super().__init__()
+        self.layers = t.nn.Sequential(
+            t.nn.Linear(input_len, input_len),
+            t.nn.ReLU(),
+            t.nn.Linear(input_len, n_outputs),
+        )
+        self._n_outputs = n_outputs
+
+    def forward(self, feats, *args, **kwargs):
+        return self.layers(feats)
+
+
 # Combines the input vectors with the output of an LSTM language model
 # the outputs are predicted from left to right, previous positions are embedded and fed into the lm
 class LmDecoder(t.nn.Module):
